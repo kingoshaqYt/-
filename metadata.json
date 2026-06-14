@@ -1,0 +1,6 @@
+{
+  "name": "RECLAIM ACCOUNTS",
+  "description": "Ultra Premium SaaS Grade account recovery application inspired by Apple VisionOS.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

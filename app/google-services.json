@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "98245081693",
+    "project_id": "reclaim-accounts",
+    "storage_bucket": "reclaim-accounts.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:98245081693:android:378e327282c97cfa306bb4",
+        "android_client_info": {
+          "package_name": "com.aistudio.reclaimaccounts.knyzqm"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "98245081693-n6k9d9k4gqgna2hv1r95t37esbcopu22.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCHQk4aRJPNdAtNBat03w8G9vf-OQGDZzs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "98245081693-n6k9d9k4gqgna2hv1r95t37esbcopu22.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
