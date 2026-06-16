@@ -2,62 +2,117 @@ package com.example.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.ripple.rememberRipple
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.flow.collect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.Spring
 
-fun Modifier.paperTexture(alpha: Float = 0.05f): Modifier = this.drawBehind {
+fun Modifier.paperTexture(alpha: Float = 0.08f): Modifier = this.drawWithContent {
+    drawContent()
     val sizeWidth = size.width
     val sizeHeight = size.height
     if (sizeWidth > 0f && sizeHeight > 0f) {
         val random = java.util.Random(42) // Consistent seed
-        val numDots = (sizeWidth * sizeHeight / 300f).toInt().coerceIn(10, 500)
-        for (i in 0 until numDots) {
+        // Draw specks
+        val numSpecks = (sizeWidth * sizeHeight / 120f).toInt().coerceIn(30, 2000)
+        for (i in 0 until numSpecks) {
             val x = random.nextFloat() * sizeWidth
             val y = random.nextFloat() * sizeHeight
-            val radius = 0.5f + random.nextFloat() * 1.0f
-            val isDark = random.nextFloat() > 0.72f
-            val dotAlpha = (0.2f + random.nextFloat() * 0.8f) * alpha
+            val sizeFactor = random.nextFloat()
+            val radius = 0.4f + sizeFactor * 0.8f
+            val isDark = random.nextFloat() > 0.65f
+            val speckAlpha = (0.3f + random.nextFloat() * 0.7f) * alpha
             if (isDark) {
                 drawCircle(
-                    color = Color.Black.copy(alpha = dotAlpha * 0.45f),
-                    radius = radius * 0.9f,
+                    color = Color.Black.copy(alpha = speckAlpha * 0.35f),
+                    radius = radius,
                     center = Offset(x, y)
                 )
             } else {
                 drawCircle(
-                    color = Color.White.copy(alpha = dotAlpha * 0.85f),
-                    radius = radius,
+                    color = Color.White.copy(alpha = speckAlpha * 0.55f),
+                    radius = radius * 1.2f,
                     center = Offset(x, y)
                 )
             }
         }
+        // Draw physical fibrous lines for paper touch
+        val numFibers = (sizeWidth * sizeHeight / 600f).toInt().coerceIn(10, 500)
+        for (i in 0 until numFibers) {
+            val x1 = random.nextFloat() * sizeWidth
+            val y1 = random.nextFloat() * sizeHeight
+            val angle = random.nextFloat() * 2f * Math.PI.toFloat()
+            val length = 3f + random.nextFloat() * 8f
+            val x2 = x1 + length * Math.cos(angle.toDouble()).toFloat()
+            val y2 = y1 + length * Math.sin(angle.toDouble()).toFloat()
+            val fiberAlpha = (0.1f + random.nextFloat() * 0.4f) * alpha
+            val isDark = random.nextFloat() > 0.5f
+            drawLine(
+                color = if (isDark) Color.Black.copy(alpha = fiberAlpha * 0.22f) else Color.White.copy(alpha = fiberAlpha * 0.35f),
+                start = Offset(x1, y1),
+                end = Offset(x2, y2),
+                strokeWidth = 0.6f + random.nextFloat() * 0.6f
+            )
+        }
     }
 }
 
-fun Modifier.depth3D(cornerRadius: Dp = 12.dp, isDark: Boolean = true): Modifier = this.drawBehind {
-    val strokeWidth = 1.dp.toPx()
-    // 3D Bevel highlight at the top edge
+fun Modifier.depth3D(cornerRadius: Dp = 12.dp, isDark: Boolean = true): Modifier = this.drawWithContent {
+    drawContent()
+    val strokeWidth = 1.25f.dp.toPx()
+    val rPx = cornerRadius.toPx()
+    // Top highlight bevel (light source from top-left)
     drawLine(
-        color = if (isDark) Color.White.copy(0.12f) else Color.White.copy(0.4f),
-        start = Offset(cornerRadius.toPx(), strokeWidth / 2),
-        end = Offset(size.width - cornerRadius.toPx(), strokeWidth / 2),
+        color = if (isDark) Color.White.copy(0.22f) else Color.White.copy(0.60f),
+        start = Offset(rPx, strokeWidth / 2),
+        end = Offset(size.width - rPx, strokeWidth / 2),
         strokeWidth = strokeWidth
     )
-    // 3D Bevel shadow at the bottom edge
+    // Left edge highlight
     drawLine(
-        color = Color.Black.copy(0.25f),
-        start = Offset(cornerRadius.toPx(), size.height - strokeWidth / 2),
-        end = Offset(size.width - cornerRadius.toPx(), size.height - strokeWidth / 2),
+        color = if (isDark) Color.White.copy(0.14f) else Color.White.copy(0.50f),
+        start = Offset(strokeWidth / 2, rPx),
+        end = Offset(strokeWidth / 2, size.height - rPx),
+        strokeWidth = strokeWidth
+    )
+    // Bottom shadow bevel
+    drawLine(
+        color = Color.Black.copy(0.46f),
+        start = Offset(rPx, size.height - strokeWidth / 2),
+        end = Offset(size.width - rPx, size.height - strokeWidth / 2),
+        strokeWidth = strokeWidth
+    )
+    // Right edge shadow bevel
+    drawLine(
+        color = Color.Black.copy(0.36f),
+        start = Offset(size.width - strokeWidth / 2, rPx),
+        end = Offset(size.width - strokeWidth / 2, size.height - rPx),
         strokeWidth = strokeWidth
     )
 }
@@ -181,4 +236,43 @@ fun Modifier.glowingAmbientOrbs(): Modifier {
             radius = size.width * 0.8f
         )
     }
+}
+
+/**
+ * Modern Touch Feedback Modifier (Scale + Ripple)
+ */
+fun Modifier.bounceClick(
+    onClick: () -> Unit
+): Modifier = composed {
+    var isPressed by remember { mutableStateOf(false) }
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed) 0.94f else 1f,
+        animationSpec = spring(
+            dampingRatio = Spring.DampingRatioMediumBouncy,
+            stiffness = Spring.StiffnessMedium
+        ),
+        label = "bounce"
+    )
+    val interactionSource = remember { MutableInteractionSource() }
+
+    LaunchedEffect(interactionSource) {
+        interactionSource.interactions.collect { interaction ->
+            when (interaction) {
+                is androidx.compose.foundation.interaction.PressInteraction.Press -> isPressed = true
+                is androidx.compose.foundation.interaction.PressInteraction.Release -> isPressed = false
+                is androidx.compose.foundation.interaction.PressInteraction.Cancel -> isPressed = false
+            }
+        }
+    }
+
+    this
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        .clickable(
+            interactionSource = interactionSource,
+            indication = androidx.compose.foundation.LocalIndication.current,
+            onClick = onClick
+        )
 }

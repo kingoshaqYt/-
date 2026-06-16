@@ -30,7 +30,7 @@ class AppRepository {
         .build()
 
     private val firebaseRetrofit = Retrofit.Builder()
-        .baseUrl("https://pubg-unban-accounts-2025-default-rtdb.asia-southeast1.firebasedatabase.app/")
+        .baseUrl("https://reclaim-accounts-default-rtdb.firebaseio.com/")
         .client(okHttpClient)
         .addConverterFactory(MoshiConverterFactory.create(moshi))
         .build()
@@ -139,5 +139,93 @@ class AppRepository {
                 type = "warning"
             )
         )
+    }
+
+    // --- FIREBASE REALTIME DATABASE SYNC LAYER ---
+
+    suspend fun rtdbSaveProfile(uid: String, profile: Map<String, Any?>): Boolean {
+        return try {
+            firebaseApi.saveProfile(uid, profile)
+            true
+        } catch (e: Exception) {
+            Log.e("AppRepository", "rtdbSaveProfile error: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun rtdbGetProfile(uid: String): Map<String, Any?>? {
+        return try {
+            firebaseApi.getProfile(uid)
+        } catch (e: Exception) {
+            Log.e("AppRepository", "rtdbGetProfile error: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun rtdbSaveCase(caseId: String, caseData: Map<String, Any?>): Boolean {
+        return try {
+            firebaseApi.saveCase(caseId, caseData)
+            true
+        } catch (e: Exception) {
+            Log.e("AppRepository", "rtdbSaveCase error: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun rtdbGetAllCases(): Map<String, Map<String, Any?>>? {
+        return try {
+            firebaseApi.getAllCases()
+        } catch (e: Exception) {
+            Log.e("AppRepository", "rtdbGetAllCases error: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun rtdbSaveCaseMessage(caseId: String, msgId: String, msgData: Map<String, Any?>): Boolean {
+        return try {
+            firebaseApi.saveCaseMessage(caseId, msgId, msgData)
+            true
+        } catch (e: Exception) {
+            Log.e("AppRepository", "rtdbSaveCaseMessage error: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun rtdbGetCaseMessages(caseId: String): Map<String, Map<String, Any?>>? {
+        return try {
+            firebaseApi.getCaseMessages(caseId)
+        } catch (e: Exception) {
+            Log.e("AppRepository", "rtdbGetCaseMessages error: ${e.message}")
+            null
+        }
+    }
+
+    suspend fun rtdbSaveUpdate(updateId: String, updateData: Map<String, Any?>): Boolean {
+        return try {
+            firebaseApi.saveUpdate(updateId, updateData)
+            true
+        } catch (e: Exception) {
+            Log.e("AppRepository", "rtdbSaveUpdate error: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun rtdbDeleteUpdate(updateId: String): Boolean {
+        return try {
+            firebaseApi.deleteUpdate(updateId)
+            true
+        } catch (e: Exception) {
+            Log.e("AppRepository", "rtdbDeleteUpdate error: ${e.message}")
+            false
+        }
+    }
+
+    suspend fun rtdbGetUpdates(): Map<String, Map<String, Any?>>? {
+        return try {
+            firebaseApi.getUpdates()
+        } catch (e: Exception) {
+            Log.e("AppRepository", "rtdbGetUpdates error: ${e.message}")
+            null
+        }
     }
 }

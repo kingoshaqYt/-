@@ -1,5 +1,6 @@
 package com.example.ui
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppRepository
@@ -20,21 +21,21 @@ val defaultSliders = listOf(
     SupabaseSlider(
         id = 1,
         title = "Account Recovery Guide",
-        description = "Master the steps for full security and custom reclamation system logs.",
+        description = "Master the steps for keeping your account safely protected.",
         image_url = "https://images.unsplash.com/photo-1563986768609-322da13575f3?w=800&auto=format&fit=crop",
         badge = "GUIDE"
     ),
     SupabaseSlider(
         id = 2,
-        title = "Email Recovery System",
-        description = "Advanced secondary layer mailbox bypass and visual extraction keys.",
+        title = "Email Help Resource",
+        description = "Access key information for maintaining email safety and usage.",
         image_url = "https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=800&auto=format&fit=crop",
         badge = "EMAIL"
     ),
     SupabaseSlider(
         id = 3,
         title = "In-Game Recovery Guide",
-        description = "Level up your gaming security parameters via live token unbans.",
+        description = "Level up your gaming experience via helpful tips and community advice.",
         image_url = "https://images.unsplash.com/photo-1511512578047-dfb367046420?w=800&auto=format&fit=crop",
         badge = "GAMING"
     )
@@ -68,17 +69,22 @@ enum class AppThemeStyle {
     DARK, GRAY
 }
 
+enum class AppThemeMode {
+    LIGHT, DARK, TITANIUM, AUTO
+}
+
 enum class SubscriptionPlan {
     FREE, TRIAL, PREMIUM
 }
 
 data class ReclaimUiState(
     val currentTab: NavigationTab = NavigationTab.HOME,
-    val language: LanguageDictionary.Language = LanguageDictionary.Language.ENGLISH,
+    
     val glassIntensity: GlassIntensity = GlassIntensity.MEDIUM,
     val animationProfile: AnimationProfile = AnimationProfile.PREMIUM,
-    val isDarkTheme: Boolean = true, // Force premium dark by default
-    val themeStyle: AppThemeStyle = AppThemeStyle.DARK,
+    val isDarkTheme: Boolean = false, // Titanium is light/textured by default now
+    val themeStyle: AppThemeStyle = AppThemeStyle.GRAY,
+    val themeMode: AppThemeMode = AppThemeMode.TITANIUM,
     
     // Onboarding & walkthrough completes
     val hasCompletedOnboarding: Boolean = false,
@@ -151,7 +157,13 @@ data class ReclaimUiState(
     val aiQuery: String = "Explain how to bypass the 10-year sandbox ban signature.",
     val isAiLoading: Boolean = false,
     val chatMessages: List<ChatMessage> = listOf(
-        ChatMessage("init_1", "AI Assistant", "Hello and welcome to the secure unban advisor chat. I am here to assist you with unblocking your account. How can I help you today?", false, "01:00")
+        ChatMessage(
+            "init_1", 
+            "AI Assistant", 
+            "Hello and welcome to the secure unban advisor chat. I am here to assist you with unblocking your account. How can I help you today?", 
+            false, 
+            java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+        )
     ),
     val isChatLoading: Boolean = false,
     val isPreloadSandboxActive: Boolean = false,
@@ -163,7 +175,7 @@ data class ReclaimUiState(
     val showLowCreditWarning: Boolean = false,
     
     // Dynamic Probability & Recovery Score states
-    val currentProbability: Int = 78,
+    val currentProbability: Int = 25,
     val isProbabilityRefreshing: Boolean = false,
     val currentRecoveryScore: Float = 6.8f,
     val isRecoveryScoreBoosting: Boolean = false,
@@ -182,6 +194,8 @@ data class ReclaimUiState(
     // Promo Code System (Unlimited Balance Credit System)
     val isUnlimitedCredits: Boolean = false,
     val activatedPromoCode: String = "",
+    val hasClaimedOneTimeReward: Boolean = false,
+    val redeemedPromoCodes: List<String> = emptyList(),
 
     // Recovery History logs
     val recoveryHistory: List<RecoveryHistoryLogItem> = defaultRecoveryHistory,
@@ -194,7 +208,16 @@ data class ReclaimUiState(
     // Modern Onboarding / Profile Setup State
     val hasCompletedProfileSetup: Boolean = false,
     val authError: String? = null,
-    val isAuthOperationLoading: Boolean = false
+    val isAuthOperationLoading: Boolean = false,
+
+    // Real-time support system states
+    val supportCases: List<SupportCase> = emptyList(),
+    val activeCaseMessages: List<CaseMessage> = emptyList(),
+    val activeSelectedCase: SupportCase? = null,
+
+    // Real-time globally synced news & updates
+    val systemUpdates: List<SystemUpdate> = emptyList(),
+    val isAdminMode: Boolean = false
 )
 
 enum class NavigationTab {
@@ -239,6 +262,31 @@ data class RecoveryHistoryLogItem(
     val progress: Float = 1.0f
 )
 
+data class SupportCase(
+    val id: String = "",
+    val title: String = "",
+    val description: String = "",
+    val status: String = "open", // open, pending, resolved
+    val userId: String = "",
+    val createdAt: Long = 0L
+)
+
+data class CaseMessage(
+    val id: String = "",
+    val caseId: String = "",
+    val senderId: String = "",
+    val senderName: String = "",
+    val message: String = "",
+    val timestamp: Long = 0L
+)
+
+data class SystemUpdate(
+    val id: String = "",
+    val title: String = "",
+    val description: String = "",
+    val timestamp: Long = 0L
+)
+
 class ReclaimViewModel : ViewModel() {
 
     private val repository = AppRepository()
@@ -248,10 +296,15 @@ class ReclaimViewModel : ViewModel() {
     private var timerJob: Job? = null
     private var telemetryJob: Job? = null
 
+    private var casesListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var messagesListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var updatesListener: com.google.firebase.firestore.ListenerRegistration? = null
+
     init {
         loadData()
         startCountdownTimer()
         startTelemetryFluctuator()
+        startListeningToUpdates()
     }
 
     private fun loadData() {
@@ -381,10 +434,7 @@ class ReclaimViewModel : ViewModel() {
         _uiState.update { it.copy(showHomeDisclaimerDialog = false) }
     }
 
-    fun changeLanguage(lang: LanguageDictionary.Language) {
-        _uiState.update { it.copy(language = lang) }
-        showToast("LANGUAGE SWITCHED SUCCESSFULLY", "SUCCESS")
-    }
+    
 
     private var customToastJob: Job? = null
     fun showToast(message: String, type: String = "SUCCESS") {
@@ -398,8 +448,9 @@ class ReclaimViewModel : ViewModel() {
 
     fun applyPromoCode(code: String): Boolean {
         val uppercaseCode = code.trim().uppercase()
-        val validCodes = listOf("OSHAG", "OSHAGPLAYZ", "OSHAQ", "OSHAQPLAYZ", "UNLIMITED", "CREDITED", "RECLAIM2026", "CHEATS")
-        if (uppercaseCode in validCodes) {
+        val unlimitedCodes = listOf("OSHAG", "OSHAGPLAYZ", "OSHAQ", "OSHAQPLAYZ", "UNLIMITED", "CREDITED", "RECLAIM2026")
+        
+        if (uppercaseCode in unlimitedCodes) {
             _uiState.update { state ->
                 state.copy(
                     isUnlimitedCredits = true,
@@ -411,8 +462,7 @@ class ReclaimViewModel : ViewModel() {
             showToast("PROMO CODE '$uppercaseCode' ACCEPTED! PREMIUM UNLIMITED ACTIVE!", "SUCCESS")
             return true
         } else {
-            showToast("INVALID PROMO CODE. PLEASE TRY AGAIN.", "ERROR")
-            return false
+            return redeemPromoCode(uppercaseCode)
         }
     }
 
@@ -461,26 +511,56 @@ class ReclaimViewModel : ViewModel() {
         _uiState.update { it.copy(animationProfile = profile) }
     }
 
-    fun toggleTheme() {
-        val nextTheme = when (_uiState.value.themeStyle) {
-            AppThemeStyle.DARK -> AppThemeStyle.GRAY
-            AppThemeStyle.GRAY -> AppThemeStyle.DARK
+    fun getActiveThemeMode(mode: AppThemeMode, isSystemDark: Boolean): AppThemeMode {
+        return when (mode) {
+            AppThemeMode.AUTO -> {
+                val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                val isNight = hour < 6 || hour >= 18
+                if (isNight || isSystemDark) AppThemeMode.TITANIUM else AppThemeMode.LIGHT
+            }
+            else -> mode
         }
-        setThemeStyle(nextTheme)
+    }
+
+    fun setThemeMode(mode: AppThemeMode, isSystemDark: Boolean = true) {
+        val resolved = getActiveThemeMode(mode, isSystemDark)
+        val isDark = resolved == AppThemeMode.DARK
+        _uiState.update {
+            it.copy(
+                themeMode = mode,
+                isDarkTheme = isDark,
+                themeStyle = if (resolved == AppThemeMode.LIGHT) AppThemeStyle.GRAY else AppThemeStyle.DARK
+            )
+        }
+    }
+
+    fun updateIsDarkTheme(isDark: Boolean) {
+        if (_uiState.value.isDarkTheme != isDark) {
+            _uiState.update { it.copy(isDarkTheme = isDark) }
+        }
+    }
+
+    fun toggleTheme() {
+        val nextMode = when (_uiState.value.themeMode) {
+            AppThemeMode.LIGHT -> AppThemeMode.DARK
+            AppThemeMode.DARK -> AppThemeMode.TITANIUM
+            AppThemeMode.TITANIUM -> AppThemeMode.AUTO
+            AppThemeMode.AUTO -> AppThemeMode.LIGHT
+        }
+        setThemeMode(nextMode)
     }
 
     fun setThemeStyle(style: AppThemeStyle) {
         _uiState.update {
             it.copy(
                 themeStyle = style,
-                isDarkTheme = true // Always true for Dark or Gray
+                themeMode = if (style == AppThemeStyle.DARK) AppThemeMode.DARK else AppThemeMode.TITANIUM
             )
         }
     }
 
     fun setTheme(isDark: Boolean) {
-        val style = if (isDark) AppThemeStyle.DARK else AppThemeStyle.GRAY
-        setThemeStyle(style)
+        setThemeMode(if (isDark) AppThemeMode.DARK else AppThemeMode.LIGHT)
     }
 
     fun setOnboardingCompleted(completed: Boolean) {
@@ -534,6 +614,7 @@ class ReclaimViewModel : ViewModel() {
                 showAdRewardAnimation = true
             )
         }
+        syncCreditsToFirebase()
     }
 
     fun watchSponsoredAd() {
@@ -547,6 +628,7 @@ class ReclaimViewModel : ViewModel() {
                 showAdRewardAnimation = true
             )
         }
+        syncCreditsToFirebase()
     }
 
     fun grantDemoCredits(amount: Int) {
@@ -559,6 +641,100 @@ class ReclaimViewModel : ViewModel() {
                 showAdRewardAnimation = true
             )
         }
+        syncCreditsToFirebase()
+    }
+
+    fun syncCreditsToFirebase() {
+        val auth = FirebaseAuth.getInstance()
+        val uid = auth.currentUser?.uid ?: return
+        val state = _uiState.value
+        if (state.isGuest) return
+
+        val updates = hashMapOf<String, Any>(
+            "userCredits" to state.userCredits,
+            "hasClaimedOneTimeReward" to state.hasClaimedOneTimeReward,
+            "redeemedPromoCodes" to state.redeemedPromoCodes
+        )
+        try {
+            FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid)
+                .update(updates)
+                .addOnFailureListener {
+                    try {
+                        FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid)
+                            .set(updates, com.google.firebase.firestore.SetOptions.merge())
+                    } catch (e: Exception) {
+                        Log.e("ReclaimViewModel", "Nested firestore credits sync failure: ${e.message}")
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firestore credits sync failure: ${e.message}")
+        }
+
+        viewModelScope.launch {
+            try {
+                val currentProfile = repository.rtdbGetProfile(uid)?.toMutableMap() ?: mutableMapOf()
+                currentProfile["userCredits"] = state.userCredits
+                currentProfile["hasClaimedOneTimeReward"] = state.hasClaimedOneTimeReward
+                currentProfile["redeemedPromoCodes"] = state.redeemedPromoCodes
+                repository.rtdbSaveProfile(uid, currentProfile)
+            } catch (e: Exception) {
+                Log.e("ReclaimViewModel", "RTDB sync error: ${e.message}")
+            }
+        }
+    }
+
+    fun claimOneTimeReward(): Boolean {
+        val state = _uiState.value
+        if (state.isGuest) {
+            showToast("RESTRICTED: PLEASE REGISTER OR SIGN IN TO CLAIM REWARDS!", "WARNING")
+            return false
+        }
+        if (state.hasClaimedOneTimeReward) {
+            showToast("ERROR: REWARD ALREADY CLAIMED ON THIS ACCOUNT!", "ERROR")
+            return false
+        }
+        _uiState.update {
+            it.copy(
+                userCredits = it.userCredits + 100,
+                hasClaimedOneTimeReward = true
+            )
+        }
+        syncCreditsToFirebase()
+        showToast("SUCCESS: +100 SECURE COINS CLAIMED SUCCESSFULLY!", "SUCCESS")
+        return true
+    }
+
+    fun redeemPromoCode(code: String): Boolean {
+        val uppercaseCode = code.trim().uppercase()
+        if (uppercaseCode.isBlank()) {
+            showToast("PROMO CODE CANNOT BE EMPTY!", "ERROR")
+            return false
+        }
+        val state = _uiState.value
+        if (state.isGuest) {
+            showToast("RESTRICTED: PLEASE SIGN IN TO REDEEM PROMO CODES!", "WARNING")
+            return false
+        }
+        if (uppercaseCode in state.redeemedPromoCodes) {
+            showToast("ERROR: CODE '$uppercaseCode' ALREADY REDEEMED BY YOU!", "ERROR")
+            return false
+        }
+        val validCodes = listOf("RECLAIM70", "OSHAG70", "FREE70", "BONUS70", "RECLAIM", "OSHAG", "CHEATS")
+        val isValid = uppercaseCode in validCodes || uppercaseCode.endsWith("70")
+        if (isValid) {
+            _uiState.update {
+                it.copy(
+                    userCredits = it.userCredits + 70,
+                    redeemedPromoCodes = it.redeemedPromoCodes + uppercaseCode
+                )
+            }
+            syncCreditsToFirebase()
+            showToast("SUCCESS: PROMO CODE '$uppercaseCode' REDEEMED! +70 DETAILS CREDITS!", "SUCCESS")
+            return true
+        } else {
+            showToast("INVALID PROMO CODE, PLEASE TRY AGAIN.", "ERROR")
+            return false
+        }
     }
 
     fun refreshProbability() {
@@ -566,7 +742,7 @@ class ReclaimViewModel : ViewModel() {
         viewModelScope.launch {
             _uiState.update { it.copy(isProbabilityRefreshing = true) }
             delay(1500)
-            val newProb = (75..99).random()
+            val newProb = (1..50).random()
             _uiState.update { state ->
                 val timeString = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
                 state.copy(
@@ -649,22 +825,30 @@ class ReclaimViewModel : ViewModel() {
     fun spendCredits(amount: Int): Boolean {
         var success = false
         _uiState.update { state ->
-            if (state.isGuest || state.isUnlimitedCredits) {
-                // Guest mode or Unlimited promo code active
+            if (state.isGuest) {
+                success = false
+                state
+            } else if (state.isUnlimitedCredits) {
                 success = true
                 state
             } else if (state.subscriptionPlan == SubscriptionPlan.PREMIUM || state.subscriptionPlan == SubscriptionPlan.TRIAL) {
-                // Premium subscription has unlimited credentials bypass
-                success = true
-                state
+                if (state.userCredits >= amount) {
+                    success = true
+                    state.copy(userCredits = state.userCredits - amount)
+                } else {
+                    success = true
+                    state
+                }
             } else if (state.userCredits >= amount) {
-                // Regular logged in user spends credit
                 success = true
                 state.copy(userCredits = state.userCredits - amount)
             } else {
                 success = false
                 state
             }
+        }
+        if (success) {
+            syncCreditsToFirebase()
         }
         return success
     }
@@ -678,10 +862,30 @@ class ReclaimViewModel : ViewModel() {
     }
 
     fun togglePreloadSandbox() {
+        if (!_uiState.value.isPreloadSandboxActive) {
+            if (_uiState.value.isGuest) {
+                showToast("Guest Users cannot access this feature.", "ACCESS DENIED")
+                return
+            }
+            if (!spendCredits(15)) {
+                showToast("Insufficient credits. Need 15 credits.", "ERROR")
+                return
+            }
+        }
         _uiState.update { it.copy(isPreloadSandboxActive = !it.isPreloadSandboxActive) }
     }
 
     fun togglePreloadMailDecoupler() {
+        if (!_uiState.value.isPreloadMailDecouplerActive) {
+            if (_uiState.value.isGuest) {
+                showToast("Guest Users cannot access this feature.", "ACCESS DENIED")
+                return
+            }
+            if (!spendCredits(20)) {
+                showToast("Insufficient credits. Need 20 credits.", "ERROR")
+                return
+            }
+        }
         _uiState.update { it.copy(isPreloadMailDecouplerActive = !it.isPreloadMailDecouplerActive) }
     }
 
@@ -947,7 +1151,9 @@ class ReclaimViewModel : ViewModel() {
     fun sendChatMessage(text: String) {
         if (text.isBlank()) return
         val userMsgId = java.util.UUID.randomUUID().toString()
-        val userMsg = ChatMessage(userMsgId, "You", text, true, "Just now")
+        val currentTime = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
+        val userMsg = ChatMessage(userMsgId, "You", text, true, currentTime)
+        val stateSnapshot = _uiState.value
         
         _uiState.update { 
             it.copy(
@@ -957,29 +1163,19 @@ class ReclaimViewModel : ViewModel() {
         }
         
         viewModelScope.launch {
-            delay(1500) // typing simulation
-            val responseText = when {
-                text.contains("hello", ignoreCase = true) || text.contains("hi", ignoreCase = true) -> {
-                    "🛡️ [SECURE SECURITY PROTOCOL ENGAGED]\nGreetings, Commander! I am the Core AI unban specialist advisor. Submit your PUBG UID and current ban reason. I've been trained on over 50,000 successful account restoration signatures. We will orchestrate the sandbox unblocking bypass route using custom client-side handshakes."
-                }
-                text.contains("10", ignoreCase = true) || text.contains("ten", ignoreCase = true) || text.contains("year", ignoreCase = true) -> {
-                    "🔑 [10-YEAR SUSPENSION SANDBOX DETECTION]\nA 10-year suspension is often triggered by an 'Illegal Client Revision' flag. My diagnostic analysis suggest this can be bypassed by spoofing your device's physical certificate IDs via a custom SECURE SMTP payload. We route this through isolated unban node clusters to override the global server state."
-                }
-                text.contains("unban", ignoreCase = true) || text.contains("bypass", ignoreCase = true) || text.contains("reclaim", ignoreCase = true) -> {
-                    "⚡ [BYPASS ENGINE OPERATIONAL]\nAdvanced bypass structures successfully compiled v1.4.1! Our telemetry layer detects your sandbox state. Recommendation: Execute both 'Direct Email Layer appeal' AND 'In-game authentication token injection'. Ensure T1 Shield protection is ACTIVE before launching PUBG Mobile."
-                }
-                text.contains("oshaq", ignoreCase = true) || text.contains("developer", ignoreCase = true) || text.contains("whatsapp", ignoreCase = true) -> {
-                    "📱 [APP ARCHITECT & COMMUNITY]\nThis platform was fully architectured and coded by Oshaq Playz (@Oshaq). The unban payload logic in this app utilizes proprietary client-server handshake methods derived from modern security research. Join our live WhatsApp Community for real-time unban log updates!"
-                }
-                text.contains("status", ignoreCase = true) || text.contains("help", ignoreCase = true) -> {
-                    "📊 [DIGITAL TELEMETRY STATUS]\nServers: [OPTIMAL / 100% SECURE]\nInjection Latency: <8ms\nSuccess Probability: 98.4%\nI recommend starting with a 'Direct Email Layer Recovery' to verify your account's SMTP availability before proceeding with deep client-side unbans."
-                }
-                else -> {
-                    "🤖 [MATURE DIAGNOSTIC MATCH]\nQuery analyzed. Recommended action: 1) Activate Advanced T1 Shield Protection, 2) Complete a sandbox verification check in the 'AI Check Specialist', and 3) Transmit a secure SMTP appeal carrying your device signature to our support team."
-                }
-            }
+            val systemPrompt = """
+                You are the Core AI unban specialist advisor for the Reclaim Security App.
+                Respond with a highly skilled, direct, elite operational operative tone.
+                Current Target Info: Name: ${stateSnapshot.targetPlayerName}, UID: ${stateSnapshot.targetPlayerUid}, Ban Reason: ${stateSnapshot.targetBanReason}.
+                DO NOT USE any formatting like markdown stars (*), dashes (-), bullet points, or newlines/spacing. Keep it as pure text in a single paragraph or clean text formatting.
+                Do NOT use generic fallback dummy data. Be proactive and suggest actions to unban or troubleshoot.
+            """.trimIndent()
+            
+            val responseText = com.example.data.GeminiClient.callGemini(systemPrompt, text)
+            
+            val responseTime = java.text.SimpleDateFormat("hh:mm a", java.util.Locale.getDefault()).format(java.util.Date())
             val botMsgId = java.util.UUID.randomUUID().toString()
-            val botMsg = ChatMessage(botMsgId, "AI Specialist", responseText, false, "Just now")
+            val botMsg = ChatMessage(botMsgId, "AI Specialist", responseText, false, responseTime)
             _uiState.update {
                 it.copy(
                     chatMessages = it.chatMessages + botMsg,
@@ -1033,8 +1229,10 @@ class ReclaimViewModel : ViewModel() {
         }
     }
 
+
+
     fun checkUserSession(context: android.content.Context) {
-        val auth = FirebaseAuth.getInstance()
+                val auth = FirebaseAuth.getInstance()
         val currentUser = auth.currentUser
         if (currentUser != null) {
             val email = currentUser.email ?: "bypass@reclaim.com"
@@ -1047,40 +1245,88 @@ class ReclaimViewModel : ViewModel() {
                     googleAccountName = name
                 )
             }
-            val firestore = FirebaseFirestore.getInstance()
-            firestore.collection("reclaim_profiles").document(currentUser.uid)
-                .get()
-                .addOnSuccessListener { doc ->
-                    if (doc.exists()) {
-                        val pName = doc.getString("playerName") ?: ""
-                        val pUid = doc.getString("playerUid") ?: ""
-                        val pLogo = doc.getString("profileLogoUri") ?: ""
+            val handleSessionFallback = {
+                val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
+                val pName = prefs.getString("saved_playerName", "") ?: ""
+                val pUid = prefs.getString("saved_playerUid", "") ?: ""
+                _uiState.update {
+                    it.copy(
+                        targetPlayerName = pName,
+                        targetPlayerUid = pUid,
+                        hasCompletedProfileSetup = pName.isNotEmpty() && pUid.isNotEmpty(),
+                        hasCompletedOnboarding = pName.isNotEmpty() && pUid.isNotEmpty()
+                    )
+                }
+            }
+
+            // Parallel RTDB Fetch backup
+            viewModelScope.launch {
+                try {
+                    val rtdbProf = repository.rtdbGetProfile(currentUser.uid)
+                    if (rtdbProf != null) {
+                        val pName = rtdbProf["playerName"] as? String ?: ""
+                        val pUid = rtdbProf["playerUid"] as? String ?: ""
+                        val pLogo = rtdbProf["profileLogoUri"] as? String ?: ""
+                        val creditsVal = (rtdbProf["userCredits"] as? Number)?.toInt() ?: 50
+                        val claimedOneTime = rtdbProf["hasClaimedOneTimeReward"] as? Boolean ?: false
+                        val redeemedList = rtdbProf["redeemedPromoCodes"] as? List<Any> ?: emptyList()
+                        val redeemed = redeemedList.map { it.toString() }
+
                         _uiState.update {
                             it.copy(
                                 targetPlayerName = pName,
                                 targetPlayerUid = pUid,
                                 profileLogoUri = pLogo.ifBlank { null },
+                                userCredits = creditsVal,
+                                hasClaimedOneTimeReward = claimedOneTime,
+                                redeemedPromoCodes = redeemed,
                                 hasCompletedProfileSetup = pName.isNotEmpty() && pUid.isNotEmpty(),
                                 hasCompletedOnboarding = true
                             )
                         }
-                    } else {
-                        _uiState.update { it.copy(hasCompletedProfileSetup = false) }
                     }
+                } catch (e: Exception) {
+                    Log.e("ReclaimViewModel", "RTDB checkUserSession fetch error: ${e.message}")
                 }
-                .addOnFailureListener {
-                    val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
-                    val pName = prefs.getString("saved_playerName", "") ?: ""
-                    val pUid = prefs.getString("saved_playerUid", "") ?: ""
-                    _uiState.update {
-                        it.copy(
-                            targetPlayerName = pName,
-                            targetPlayerUid = pUid,
-                            hasCompletedProfileSetup = pName.isNotEmpty() && pUid.isNotEmpty(),
-                            hasCompletedOnboarding = pName.isNotEmpty() && pUid.isNotEmpty()
-                        )
+            }
+
+            try {
+                val firestore = FirebaseFirestore.getInstance()
+                firestore.collection("reclaim_profiles").document(currentUser.uid)
+                    .get()
+                    .addOnSuccessListener { doc ->
+                        if (doc.exists()) {
+                            val pName = doc.getString("playerName") ?: ""
+                            val pUid = doc.getString("playerUid") ?: ""
+                            val pLogo = doc.getString("profileLogoUri") ?: ""
+                            val creditsVal = doc.getLong("userCredits")?.toInt() ?: doc.getDouble("userCredits")?.toInt() ?: 50
+                            val claimedOneTime = doc.getBoolean("hasClaimedOneTimeReward") ?: false
+                            val redeemedList = doc.get("redeemedPromoCodes") as? List<Any> ?: emptyList()
+                            val redeemed = redeemedList.map { it.toString() }
+                            
+                            _uiState.update {
+                                it.copy(
+                                    targetPlayerName = pName,
+                                    targetPlayerUid = pUid,
+                                    profileLogoUri = pLogo.ifBlank { null },
+                                    userCredits = creditsVal,
+                                    hasClaimedOneTimeReward = claimedOneTime,
+                                    redeemedPromoCodes = redeemed,
+                                    hasCompletedProfileSetup = pName.isNotEmpty() && pUid.isNotEmpty(),
+                                    hasCompletedOnboarding = true
+                                )
+                            }
+                        } else {
+                            _uiState.update { it.copy(hasCompletedProfileSetup = false) }
+                        }
                     }
-                }
+                    .addOnFailureListener {
+                        handleSessionFallback()
+                    }
+            } catch (e: Exception) {
+                Log.e("ReclaimViewModel", "Firestore failed to initialize in checkUserSession: ${e.message}")
+                handleSessionFallback()
+            }
         } else {
             val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
             val wasLoggedIn = prefs.getBoolean("is_logged_in", false)
@@ -1151,6 +1397,11 @@ class ReclaimViewModel : ViewModel() {
                 )
                 FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid).set(profile)
                 
+                // Write to RTDB in parallel
+                viewModelScope.launch {
+                    repository.rtdbSaveProfile(uid, profile)
+                }
+                
                 val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
                 prefs.edit()
                     .putBoolean("is_logged_in", true)
@@ -1195,11 +1446,19 @@ class ReclaimViewModel : ViewModel() {
                             val pName = doc.getString("playerName") ?: ""
                             val pUid = doc.getString("playerUid") ?: ""
                             val pLogo = doc.getString("profileLogoUri") ?: ""
+                            val creditsVal = doc.getLong("userCredits")?.toInt() ?: doc.getDouble("userCredits")?.toInt() ?: 50
+                            val claimedOneTime = doc.getBoolean("hasClaimedOneTimeReward") ?: false
+                            val redeemedList = doc.get("redeemedPromoCodes") as? List<Any> ?: emptyList()
+                            val redeemed = redeemedList.map { it.toString() }
+
                             _uiState.update {
                                 it.copy(
                                     targetPlayerName = pName,
                                     targetPlayerUid = pUid,
                                     profileLogoUri = pLogo.ifBlank { null },
+                                    userCredits = creditsVal,
+                                    hasClaimedOneTimeReward = claimedOneTime,
+                                    redeemedPromoCodes = redeemed,
                                     hasCompletedProfileSetup = pName.isNotEmpty() && pUid.isNotEmpty(),
                                     hasCompletedOnboarding = true
                                 )
@@ -1209,13 +1468,35 @@ class ReclaimViewModel : ViewModel() {
                             prefs.edit()
                                 .putBoolean("is_logged_in", true)
                                 .putBoolean("is_guest", false)
-                                .putString("logged_in_email", email)
-                                .putString("logged_in_name", user?.displayName ?: email.substringBefore("@"))
                                 .putString("saved_playerName", pName)
                                 .putString("saved_playerUid", pUid)
                                 .apply()
                         } else {
-                            _uiState.update { it.copy(hasCompletedProfileSetup = false) }
+                            // Fallback to RTDB
+                            viewModelScope.launch {
+                                val rtdbProf = repository.rtdbGetProfile(uid)
+                                if (rtdbProf != null) {
+                                    val pName = rtdbProf["playerName"] as? String ?: ""
+                                    val pUid = rtdbProf["playerUid"] as? String ?: ""
+                                    val pLogo = rtdbProf["profileLogoUri"] as? String ?: ""
+                                    _uiState.update {
+                                        it.copy(
+                                            targetPlayerName = pName,
+                                            targetPlayerUid = pUid,
+                                            profileLogoUri = pLogo.ifBlank { null },
+                                            hasCompletedProfileSetup = pName.isNotEmpty() && pUid.isNotEmpty(),
+                                            hasCompletedOnboarding = true
+                                        )
+                                    }
+                                    val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
+                                    prefs.edit()
+                                        .putBoolean("is_logged_in", true)
+                                        .putBoolean("is_guest", false)
+                                        .putString("saved_playerName", pName)
+                                        .putString("saved_playerUid", pUid)
+                                        .apply()
+                                }
+                            }
                         }
                         onSuccess()
                     }
@@ -1269,6 +1550,72 @@ class ReclaimViewModel : ViewModel() {
             .putBoolean("has_completed_onboarding_v4", true)
             .apply()
         onSuccess()
+    }
+
+    fun sendPasswordReset(email: String, context: android.content.Context, onResult: (Boolean, String) -> Unit) {
+        if (email.isBlank()) {
+            onResult(false, "Please enter a valid email address.")
+            return
+        }
+        _uiState.update { it.copy(isAuthOperationLoading = true, authError = null) }
+        FirebaseAuth.getInstance().sendPasswordResetEmail(email)
+            .addOnSuccessListener {
+                _uiState.update { it.copy(isAuthOperationLoading = false) }
+                onResult(true, "Password reset link sent to $email.")
+            }
+            .addOnFailureListener { exc ->
+                _uiState.update { it.copy(isAuthOperationLoading = false) }
+                onResult(false, exc.localizedMessage ?: "Failed to send reset link.")
+            }
+    }
+
+    fun nativeGoogleSignIn(context: android.content.Context, onSuccess: () -> Unit) {
+        _uiState.update { it.copy(isAuthOperationLoading = true, authError = null) }
+        val credentialManager = androidx.credentials.CredentialManager.create(context)
+        
+        val googleIdOption = com.google.android.libraries.identity.googleid.GetGoogleIdOption.Builder()
+            .setFilterByAuthorizedAccounts(false)
+            .setServerClientId("98245081693-n6k9d9k4gqgna2hv1r95t37esbcopu22.apps.googleusercontent.com")
+            .setAutoSelectEnabled(true)
+            .build()
+            
+        val request = androidx.credentials.GetCredentialRequest.Builder()
+            .addCredentialOption(googleIdOption)
+            .build()
+            
+        viewModelScope.launch {
+            try {
+                val result = credentialManager.getCredential(context, request)
+                val credential = result.credential
+                
+                if (credential is androidx.credentials.CustomCredential && credential.type == com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                    val googleIdTokenCredential = com.google.android.libraries.identity.googleid.GoogleIdTokenCredential.createFrom(credential.data)
+                    val idToken = googleIdTokenCredential.idToken
+                    
+                    val firebaseAuth = FirebaseAuth.getInstance()
+                    val authCredential = com.google.firebase.auth.GoogleAuthProvider.getCredential(idToken, null)
+                    
+                    firebaseAuth.signInWithCredential(authCredential)
+                        .addOnSuccessListener { authResult ->
+                            val user = authResult.user
+                            if (user != null) {
+                                val userEmail = user.email ?: "googleuser@reclaim.com"
+                                val userName = user.displayName ?: userEmail.substringBefore("@")
+                                finalizeGoogleAuth(userEmail, userName, context, onSuccess)
+                            } else {
+                                _uiState.update { it.copy(isAuthOperationLoading = false, authError = "User is null after Google Auth") }
+                            }
+                        }
+                        .addOnFailureListener {
+                            _uiState.update { state -> state.copy(isAuthOperationLoading = false, authError = it.localizedMessage) }
+                        }
+                } else {
+                    _uiState.update { it.copy(isAuthOperationLoading = false, authError = "Unknown credential type") }
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(isAuthOperationLoading = false, authError = e.localizedMessage) }
+            }
+        }
     }
 
     fun finalizeGoogleAuth(email: String, name: String, context: android.content.Context, onSuccess: () -> Unit) {
@@ -1363,58 +1710,106 @@ class ReclaimViewModel : ViewModel() {
         val email = currentUser?.email ?: _uiState.value.googleAccountEmail ?: "bypass@reclaim.com"
         val loginMethod = if (_uiState.value.isGuest) "guest" else (if (currentUser?.email != null) "email" else "google")
         
-        val profile = hashMapOf(
-            "userId" to uid,
-            "email" to email,
-            "playerName" to playerName,
-            "playerUid" to playerUid,
-            "loginMethod" to loginMethod,
-            "creationDate" to java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()),
-            "deviceInfo" to "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
-        )
-        
-        FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid)
-            .set(profile)
-            .addOnSuccessListener {
-                _uiState.update {
-                    it.copy(
-                        isAuthOperationLoading = false,
-                        targetPlayerName = playerName,
-                        targetPlayerUid = playerUid,
-                        hasCompletedProfileSetup = true,
-                        hasCompletedOnboarding = true
+        val fallbackBlock = {
+            viewModelScope.launch {
+                try {
+                    val profile = hashMapOf(
+                        "userId" to uid,
+                        "email" to email,
+                        "playerName" to playerName,
+                        "playerUid" to playerUid,
+                        "loginMethod" to loginMethod,
+                        "creationDate" to java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()),
+                        "deviceInfo" to "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
                     )
+                    repository.rtdbSaveProfile(uid, profile)
+                    _uiState.update {
+                        it.copy(
+                            isAuthOperationLoading = false,
+                            targetPlayerName = playerName,
+                            targetPlayerUid = playerUid,
+                            hasCompletedProfileSetup = true,
+                            hasCompletedOnboarding = true
+                        )
+                    }
+                    val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
+                    prefs.edit()
+                        .putString("saved_playerName", playerName)
+                        .putString("saved_playerUid", playerUid)
+                        .putBoolean("is_logged_in", true)
+                        .putBoolean("has_completed_onboarding_v4", true)
+                        .apply()
+                    android.widget.Toast.makeText(context, "Profile setup synced wirelessly & backed up successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                    onSuccess()
+                } catch (ex: Exception) {
+                    _uiState.update { it.copy(isAuthOperationLoading = false) }
+                    android.widget.Toast.makeText(context, "Failed to initialize backup: ${ex.message}", android.widget.Toast.LENGTH_SHORT).show()
                 }
-                
-                val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
-                prefs.edit()
-                    .putString("saved_playerName", playerName)
-                    .putString("saved_playerUid", playerUid)
-                    .putBoolean("is_logged_in", true)
-                    .putBoolean("has_completed_onboarding_v4", true)
-                    .apply()
-                
-                onSuccess()
             }
-            .addOnFailureListener {
-                _uiState.update {
-                    it.copy(
-                        isAuthOperationLoading = false,
-                        targetPlayerName = playerName,
-                        targetPlayerUid = playerUid,
-                        hasCompletedProfileSetup = true,
-                        hasCompletedOnboarding = true
-                    )
+        }
+
+        try {
+            val db = FirebaseFirestore.getInstance()
+            db.collection("linkedPubgAccounts").document(playerUid).get()
+                .addOnSuccessListener { doc ->
+                    if (doc.exists() && doc.getString("userUid") != uid) {
+                        _uiState.update { it.copy(isAuthOperationLoading = false) }
+                        android.widget.Toast.makeText(context, "This UID is already linked to another account", android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        val mapping = hashMapOf(
+                            "pubgUid" to playerUid,
+                            "userUid" to uid,
+                            "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+                        )
+                        db.collection("linkedPubgAccounts").document(playerUid).set(mapping)
+                            .addOnSuccessListener {
+                                val profile = hashMapOf(
+                                    "userId" to uid,
+                                    "email" to email,
+                                    "playerName" to playerName,
+                                    "playerUid" to playerUid,
+                                    "loginMethod" to loginMethod,
+                                    "creationDate" to java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()),
+                                    "deviceInfo" to "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+                                )
+                                db.collection("reclaim_profiles").document(uid).set(profile)
+                                    .addOnSuccessListener {
+                                        _uiState.update {
+                                            it.copy(
+                                                isAuthOperationLoading = false,
+                                                targetPlayerName = playerName,
+                                                targetPlayerUid = playerUid,
+                                                hasCompletedProfileSetup = true,
+                                                hasCompletedOnboarding = true
+                                            )
+                                        }
+                                        
+                                        val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
+                                        prefs.edit()
+                                            .putString("saved_playerName", playerName)
+                                            .putString("saved_playerUid", playerUid)
+                                            .putBoolean("is_logged_in", true)
+                                            .putBoolean("has_completed_onboarding_v4", true)
+                                            .apply()
+                                        
+                                        onSuccess()
+                                    }
+                                    .addOnFailureListener {
+                                        fallbackBlock()
+                                    }
+                            }
+                            .addOnFailureListener {
+                                fallbackBlock()
+                            }
+                    }
                 }
-                val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
-                prefs.edit()
-                    .putString("saved_playerName", playerName)
-                    .putString("saved_playerUid", playerUid)
-                    .putBoolean("is_logged_in", true)
-                    .putBoolean("has_completed_onboarding_v4", true)
-                    .apply()
-                onSuccess()
-            }
+                .addOnFailureListener {
+                    fallbackBlock()
+                }
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firestore initialization error: ${e.message}")
+            fallbackBlock()
+        }
     }
 
     fun updatePlayerProfileInFirestore(playerName: String, playerUid: String, context: android.content.Context, onSuccess: () -> Unit) {
@@ -1423,49 +1818,489 @@ class ReclaimViewModel : ViewModel() {
         val currentUser = auth.currentUser
         val uid = currentUser?.uid ?: "google_${(_uiState.value.googleAccountEmail ?: "guest").hashCode()}"
         
-        val updates = hashMapOf<String, Any>(
-            "playerName" to playerName,
-            "playerUid" to playerUid
+        val fallbackBlock = {
+            viewModelScope.launch {
+                try {
+                    val rtdbProfile = mapOf(
+                        "userId" to uid,
+                        "email" to (currentUser?.email ?: _uiState.value.googleAccountEmail ?: "bypass@reclaim.com"),
+                        "playerName" to playerName,
+                        "playerUid" to playerUid,
+                        "loginMethod" to "email"
+                    )
+                    repository.rtdbSaveProfile(uid, rtdbProfile)
+                    _uiState.update {
+                        it.copy(
+                            isAuthOperationLoading = false,
+                            targetPlayerName = playerName,
+                            targetPlayerUid = playerUid,
+                            hasCompletedProfileSetup = true
+                        )
+                    }
+                    val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
+                    prefs.edit()
+                        .putString("saved_playerName", playerName)
+                        .putString("saved_playerUid", playerUid)
+                        .apply()
+                    android.widget.Toast.makeText(context, "Changes synchronized locally & backed up to Realtime Database successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                    onSuccess()
+                } catch (ex: Exception) {
+                    _uiState.update { it.copy(isAuthOperationLoading = false) }
+                    android.widget.Toast.makeText(context, "Failed to update offline backup: ${ex.message}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+
+        try {
+            val db = FirebaseFirestore.getInstance()
+            db.collection("linkedPubgAccounts").document(playerUid).get()
+                .addOnSuccessListener { doc ->
+                    if (doc.exists() && doc.getString("userUid") != uid) {
+                        _uiState.update { it.copy(isAuthOperationLoading = false) }
+                        android.widget.Toast.makeText(context, "This UID is already linked to another account", android.widget.Toast.LENGTH_LONG).show()
+                    } else {
+                        val mapping = hashMapOf(
+                            "pubgUid" to playerUid,
+                            "userUid" to uid,
+                            "createdAt" to com.google.firebase.firestore.FieldValue.serverTimestamp()
+                        )
+                        db.collection("linkedPubgAccounts").document(playerUid).set(mapping)
+                            .addOnSuccessListener {
+                                val updates = hashMapOf<String, Any>(
+                                    "playerName" to playerName,
+                                    "playerUid" to playerUid
+                                )
+                                // Parallel RTDB update
+                                viewModelScope.launch {
+                                    val rtdbProfile = mapOf(
+                                        "userId" to uid,
+                                        "email" to (currentUser?.email ?: _uiState.value.googleAccountEmail ?: "bypass@reclaim.com"),
+                                        "playerName" to playerName,
+                                        "playerUid" to playerUid,
+                                        "loginMethod" to "email"
+                                    )
+                                    repository.rtdbSaveProfile(uid, rtdbProfile)
+                                }
+                                db.collection("reclaim_profiles").document(uid).update(updates)
+                                    .addOnSuccessListener {
+                                        _uiState.update {
+                                            it.copy(
+                                                isAuthOperationLoading = false,
+                                                targetPlayerName = playerName,
+                                                targetPlayerUid = playerUid
+                                            )
+                                        }
+                                        val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
+                                        prefs.edit()
+                                            .putString("saved_playerName", playerName)
+                                            .putString("saved_playerUid", playerUid)
+                                            .apply()
+                                        onSuccess()
+                                    }
+                                    .addOnFailureListener {
+                                        fallbackBlock()
+                                    }
+                            }
+                            .addOnFailureListener {
+                                fallbackBlock()
+                            }
+                    }
+                }
+                .addOnFailureListener {
+                    fallbackBlock()
+                }
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firestore initialization error during update: ${e.message}")
+            fallbackBlock()
+        }
+    }
+
+    fun startListeningToCases() {
+        try {
+            val auth = FirebaseAuth.getInstance()
+            val uid = auth.currentUser?.uid ?: "google_${(_uiState.value.googleAccountEmail ?: "guest").hashCode()}"
+            
+            // Parallel RTDB Fetch Fallback
+            viewModelScope.launch {
+                try {
+                    val allCasesMap = repository.rtdbGetAllCases()
+                    if (allCasesMap != null) {
+                        val list = allCasesMap.values.mapNotNull { map ->
+                            val id = map["id"] as? String ?: ""
+                            val title = map["title"] as? String ?: ""
+                            val description = map["description"] as? String ?: ""
+                            val status = map["status"] as? String ?: "open"
+                            val userId = map["userId"] as? String ?: ""
+                            val createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L
+                            if (userId == uid) {
+                                SupportCase(id, title, description, status, userId, createdAt)
+                            } else null
+                        }.sortedByDescending { it.createdAt }
+                        _uiState.update { it.copy(supportCases = list) }
+                    }
+                } catch (e: Exception) {
+                    Log.e("ReclaimViewModel", "RTDB cases fetch error: ${e.message}")
+                }
+            }
+
+            casesListener?.remove()
+            casesListener = FirebaseFirestore.getInstance().collection("cases")
+                .whereEqualTo("userId", uid)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val list = snapshot.documents.mapNotNull { doc ->
+                            val id = doc.id
+                            val title = doc.getString("title") ?: ""
+                            val description = doc.getString("description") ?: ""
+                            val status = doc.getString("status") ?: "open"
+                            val userId = doc.getString("userId") ?: ""
+                            val createdAt = doc.getLong("createdAt") ?: 0L
+                            SupportCase(id, title, description, status, userId, createdAt)
+                        }.sortedByDescending { it.createdAt }
+                        _uiState.update { it.copy(supportCases = list) }
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firebase error in startListeningToCases: ${e.message}")
+        }
+    }
+
+    fun startListeningToAllCasesForAdmin() {
+        try {
+            // Parallel RTDB Fetch Fallback for Admin
+            viewModelScope.launch {
+                try {
+                    val allCasesMap = repository.rtdbGetAllCases()
+                    if (allCasesMap != null) {
+                        val list = allCasesMap.values.mapNotNull { map ->
+                            val id = map["id"] as? String ?: ""
+                            val title = map["title"] as? String ?: ""
+                            val description = map["description"] as? String ?: ""
+                            val status = map["status"] as? String ?: "open"
+                            val userId = map["userId"] as? String ?: ""
+                            val createdAt = (map["createdAt"] as? Number)?.toLong() ?: 0L
+                            SupportCase(id, title, description, status, userId, createdAt)
+                        }.sortedByDescending { it.createdAt }
+                        _uiState.update { it.copy(supportCases = list) }
+                    }
+                } catch (e: Exception) {
+                    Log.e("ReclaimViewModel", "RTDB admin cases fetch error: ${e.message}")
+                }
+            }
+
+            casesListener?.remove()
+            casesListener = FirebaseFirestore.getInstance().collection("cases")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val list = snapshot.documents.mapNotNull { doc ->
+                            val id = doc.id
+                            val title = doc.getString("title") ?: ""
+                            val description = doc.getString("description") ?: ""
+                            val status = doc.getString("status") ?: "open"
+                            val userId = doc.getString("userId") ?: ""
+                            val createdAt = doc.getLong("createdAt") ?: 0L
+                            SupportCase(id, title, description, status, userId, createdAt)
+                        }.sortedByDescending { it.createdAt }
+                        _uiState.update { it.copy(supportCases = list) }
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firebase error in startListeningToAllCasesForAdmin: ${e.message}")
+        }
+    }
+
+    fun selectCase(case: SupportCase?) {
+        _uiState.update { it.copy(activeSelectedCase = case, activeCaseMessages = emptyList()) }
+        messagesListener?.remove()
+        messagesListener = null
+        
+        if (case != null) {
+            // Parallel RTDB Messages Fetch Fallback
+            viewModelScope.launch {
+                try {
+                    val messagesMap = repository.rtdbGetCaseMessages(case.id)
+                    if (messagesMap != null) {
+                        val msgs = messagesMap.values.mapNotNull { map ->
+                            val id = map["id"] as? String ?: ""
+                            val caseId = map["caseId"] as? String ?: case.id
+                            val senderId = map["senderId"] as? String ?: ""
+                            val senderName = map["senderName"] as? String ?: ""
+                            val msgText = map["message"] as? String ?: ""
+                            val ts = (map["timestamp"] as? Number)?.toLong() ?: 0L
+                            CaseMessage(id, caseId, senderId, senderName, msgText, ts)
+                        }.sortedBy { it.timestamp }
+                        _uiState.update { it.copy(activeCaseMessages = msgs) }
+                    }
+                } catch (e: Exception) {
+                    Log.e("ReclaimViewModel", "RTDB messages fetch error: ${e.message}")
+                }
+            }
+
+            messagesListener = FirebaseFirestore.getInstance().collection("cases").document(case.id).collection("messages")
+                .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.ASCENDING)
+                .addSnapshotListener { snapshot, error ->
+                     if (error != null) {
+                         return@addSnapshotListener
+                     }
+                     if (snapshot != null) {
+                         val msgs = snapshot.documents.mapNotNull { doc ->
+                             val id = doc.id
+                             val caseId = doc.getString("caseId") ?: case.id
+                             val senderId = doc.getString("senderId") ?: ""
+                             val senderName = doc.getString("senderName") ?: ""
+                             val msgText = doc.getString("message") ?: ""
+                             val ts = doc.getLong("timestamp") ?: 0L
+                             CaseMessage(id, caseId, senderId, senderName, msgText, ts)
+                         }
+                         _uiState.update { it.copy(activeCaseMessages = msgs) }
+                     }
+                }
+        }
+    }
+
+    fun sendCaseMessage(messageText: String) {
+        val activeCase = _uiState.value.activeSelectedCase ?: return
+        if (messageText.isBlank()) return
+        
+        val auth = FirebaseAuth.getInstance()
+        val uid = auth.currentUser?.uid ?: "google_${(_uiState.value.googleAccountEmail ?: "guest").hashCode()}"
+        val userName = auth.currentUser?.displayName ?: _uiState.value.googleAccountName ?: _uiState.value.targetPlayerName.ifBlank { "User" }
+        
+        val msgId = java.util.UUID.randomUUID().toString()
+        val msgData = hashMapOf(
+            "id" to msgId,
+            "caseId" to activeCase.id,
+            "senderId" to uid,
+            "senderName" to userName,
+            "message" to messageText,
+            "timestamp" to System.currentTimeMillis()
         )
         
-        FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid)
-            .update(updates)
+        try {
+            FirebaseFirestore.getInstance().collection("cases").document(activeCase.id).collection("messages").document(msgId)
+                .set(msgData)
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firestore sendCaseMessage error: ${e.message}")
+        }
+
+        // Write to RTDB in parallel
+        viewModelScope.launch {
+            repository.rtdbSaveCaseMessage(activeCase.id, msgId, msgData)
+            val currentMsgs = _uiState.value.activeCaseMessages.toMutableList()
+            currentMsgs.add(CaseMessage(msgId, activeCase.id, uid, userName, messageText, msgData["timestamp"] as Long))
+            _uiState.update { it.copy(activeCaseMessages = currentMsgs) }
+        }
+    }
+
+    fun sendAdminCaseMessage(caseId: String, messageText: String) {
+        if (messageText.isBlank()) return
+        val msgId = java.util.UUID.randomUUID().toString()
+        val msgData = hashMapOf(
+            "id" to msgId,
+            "caseId" to caseId,
+            "senderId" to "admin_reclaim",
+            "senderName" to "Compliance Specialist (Admin)",
+            "message" to messageText,
+            "timestamp" to System.currentTimeMillis()
+        )
+        try {
+            FirebaseFirestore.getInstance().collection("cases").document(caseId).collection("messages").document(msgId)
+                .set(msgData)
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firestore sendAdminCaseMessage error: ${e.message}")
+        }
+
+        // Write to RTDB in parallel
+        viewModelScope.launch {
+            repository.rtdbSaveCaseMessage(caseId, msgId, msgData)
+        }
+    }
+
+    fun createSupportCase(title: String, description: String, context: android.content.Context, onSuccess: () -> Unit) {
+        if (title.isBlank() || description.isBlank()) {
+            android.widget.Toast.makeText(context, "Please enter both title and description.", android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        
+        val auth = FirebaseAuth.getInstance()
+        val uid = auth.currentUser?.uid ?: "google_${(_uiState.value.googleAccountEmail ?: "guest").hashCode()}"
+        
+        val caseId = java.util.UUID.randomUUID().toString()
+        val caseData = hashMapOf(
+            "id" to caseId,
+            "title" to title,
+            "description" to description,
+            "status" to "open",
+            "userId" to uid,
+            "createdAt" to System.currentTimeMillis()
+        )
+        
+        _uiState.update { it.copy(isLoading = true) }
+        
+        // Save to RTDB in parallel
+        viewModelScope.launch {
+            repository.rtdbSaveCase(caseId, caseData)
+            val welcomeMsgId = java.util.UUID.randomUUID().toString()
+            val welcomeMsg = hashMapOf(
+                "id" to welcomeMsgId,
+                "caseId" to caseId,
+                "senderId" to "system_compliance",
+                "senderName" to "Compliance Specialists",
+                "message" to "Thank you for enrolling Case '${title}'. Our system architecture has parsed your digital sandbox signatures. A unban specialist will audit your case payload instructions shortly.",
+                "timestamp" to System.currentTimeMillis() + 500
+            )
+            repository.rtdbSaveCaseMessage(caseId, welcomeMsgId, welcomeMsg)
+            
+            val newList = _uiState.value.supportCases.toMutableList()
+            newList.add(0, SupportCase(caseId, title, description, "open", uid, caseData["createdAt"] as Long))
+            _uiState.update { it.copy(supportCases = newList) }
+        }
+
+        try {
+            FirebaseFirestore.getInstance().collection("cases").document(caseId)
+                .set(caseData)
+                .addOnSuccessListener {
+                    _uiState.update { it.copy(isLoading = false) }
+                    val welcomeMsgId = java.util.UUID.randomUUID().toString()
+                    val welcomeMsg = hashMapOf(
+                        "id" to welcomeMsgId,
+                        "caseId" to caseId,
+                        "senderId" to "system_compliance",
+                        "senderName" to "Compliance Specialists",
+                        "message" to "Thank you for enrolling Case '${title}'. Our system architecture has parsed your digital sandbox signatures. A live unban specialist will audit your case payload instructions shortly.",
+                        "timestamp" to System.currentTimeMillis() + 500
+                    )
+                    FirebaseFirestore.getInstance().collection("cases").document(caseId).collection("messages").document(welcomeMsgId)
+                        .set(welcomeMsg)
+                        
+                    android.widget.Toast.makeText(context, "Case Enrolled successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                    onSuccess()
+                }
+                .addOnFailureListener {
+                    _uiState.update { it.copy(isLoading = false) }
+                    android.widget.Toast.makeText(context, "Case Enrolled wirelessly (Secure Sandbox backup)!", android.widget.Toast.LENGTH_SHORT).show()
+                    onSuccess()
+                }
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firestore addSupportCase error: ${e.message}")
+            _uiState.update { it.copy(isLoading = false) }
+            android.widget.Toast.makeText(context, "Case Enrolled wirelessly (Secure Sandbox backup)!", android.widget.Toast.LENGTH_SHORT).show()
+            onSuccess()
+        }
+    }
+
+    fun updateCaseStatus(caseId: String, newStatus: String, context: android.content.Context) {
+        FirebaseFirestore.getInstance().collection("cases").document(caseId)
+            .update("status", newStatus)
             .addOnSuccessListener {
                 _uiState.update {
-                    it.copy(
-                        isAuthOperationLoading = false,
-                        targetPlayerName = playerName,
-                        targetPlayerUid = playerUid
-                    )
+                    if (it.activeSelectedCase?.id == caseId) {
+                        it.copy(activeSelectedCase = it.activeSelectedCase.copy(status = newStatus))
+                    } else {
+                        it
+                    }
                 }
-                val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
-                prefs.edit()
-                    .putString("saved_playerName", playerName)
-                    .putString("saved_playerUid", playerUid)
-                    .apply()
-                onSuccess()
+                android.widget.Toast.makeText(context, "Status updated to $newStatus", android.widget.Toast.LENGTH_SHORT).show()
             }
-            .addOnFailureListener {
-                _uiState.update {
-                    it.copy(
-                        isAuthOperationLoading = false,
-                        targetPlayerName = playerName,
-                        targetPlayerUid = playerUid
-                    )
+    }
+
+    fun startListeningToUpdates() {
+        try {
+            // Parallel RTDB Fetch Fallback for Updates
+            viewModelScope.launch {
+                try {
+                    val updatesMap = repository.rtdbGetUpdates()
+                    if (updatesMap != null) {
+                        val list = updatesMap.values.mapNotNull { map ->
+                            val id = map["id"] as? String ?: ""
+                            val title = map["title"] as? String ?: ""
+                            val description = map["description"] as? String ?: ""
+                            val timestamp = (map["timestamp"] as? Number)?.toLong() ?: 0L
+                            SystemUpdate(id, title, description, timestamp)
+                        }.sortedByDescending { it.timestamp }
+                        _uiState.update { it.copy(systemUpdates = list) }
+                    }
+                } catch (e: Exception) {
+                    Log.e("ReclaimViewModel", "RTDB updates fetch error: ${e.message}")
                 }
-                val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
-                prefs.edit()
-                    .putString("saved_playerName", playerName)
-                    .putString("saved_playerUid", playerUid)
-                    .apply()
-                onSuccess()
             }
+
+            updatesListener?.remove()
+            updatesListener = FirebaseFirestore.getInstance().collection("updates")
+                .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.DESCENDING)
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val list = snapshot.documents.mapNotNull { doc ->
+                            val id = doc.id
+                            val title = doc.getString("title") ?: ""
+                            val description = doc.getString("description") ?: ""
+                            val timestamp = doc.getLong("timestamp") ?: 0L
+                            SystemUpdate(id, title, description, timestamp)
+                        }
+                        _uiState.update { it.copy(systemUpdates = list) }
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firebase error in startListeningToUpdates: ${e.message}")
+        }
+    }
+
+    fun addSystemUpdate(title: String, description: String, context: android.content.Context) {
+        val id = java.util.UUID.randomUUID().toString()
+        val data = hashMapOf(
+            "id" to id,
+            "title" to title,
+            "description" to description,
+            "timestamp" to System.currentTimeMillis()
+        )
+        FirebaseFirestore.getInstance().collection("updates").document(id)
+            .set(data)
+
+        viewModelScope.launch {
+            repository.rtdbSaveUpdate(id, data)
+            val newList = _uiState.value.systemUpdates.toMutableList()
+            newList.add(0, SystemUpdate(id, title, description, data["timestamp"] as Long))
+            _uiState.update { it.copy(systemUpdates = newList) }
+            android.widget.Toast.makeText(context, "System Update added as Admin!", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun deleteSystemUpdate(id: String, context: android.content.Context) {
+        FirebaseFirestore.getInstance().collection("updates").document(id)
+            .delete()
+
+        viewModelScope.launch {
+            repository.rtdbDeleteUpdate(id)
+            _uiState.update { it.copy(systemUpdates = it.systemUpdates.filter { !it.id.equals(id) }) }
+            android.widget.Toast.makeText(context, "System Update deleted as Admin!", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    fun toggleAdminMode(enabled: Boolean) {
+        _uiState.update { it.copy(isAdminMode = enabled) }
+        if (enabled) {
+            startListeningToAllCasesForAdmin()
+        } else {
+            startListeningToCases()
+        }
     }
 
     override fun onCleared() {
         super.onCleared()
         timerJob?.cancel()
         telemetryJob?.cancel()
+        casesListener?.remove()
+        messagesListener?.remove()
+        updatesListener?.remove()
     }
 }
 

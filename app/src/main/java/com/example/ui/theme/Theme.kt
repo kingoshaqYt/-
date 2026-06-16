@@ -10,6 +10,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.LocalContext
 
+import com.example.ui.AppThemeMode
 import com.example.ui.AppThemeStyle
 import androidx.compose.ui.graphics.Color
 
@@ -33,24 +34,36 @@ private val LightColorScheme = lightColorScheme(
     onSurface = LightOnSurface
 )
 
-private val GrayColorScheme = darkColorScheme(
-    primary = Color(0xFFFFD600), // Premium Amber Yellow highlights for titanium gray setup
-    secondary = Color(0xFF94A3B8), // Slates
-    tertiary = Color(0xFF64748B),
-    background = Color(0xFF121416), // Titanium Slate Dark
-    surface = Color(0xFF1E2126),
-    onBackground = Color(0xFFF1F5F9),
-    onSurface = Color(0xFFFFFFFF)
+private val TitaniumColorScheme = lightColorScheme(
+    primary = Color(0xFF000000),
+    secondary = Color(0xFF475569),
+    tertiary = Color(0xFF0F172A),
+    background = Color(0xFFFFFFFF),
+    surface = Color(0xFFFAFAFA),
+    onBackground = Color(0xFF000000),
+    onSurface = Color(0xFF000000)
 )
 
 @Composable
 fun MyApplicationTheme(
-    themeStyle: AppThemeStyle = AppThemeStyle.DARK,
+    themeMode: AppThemeMode = AppThemeMode.AUTO,
     content: @Composable () -> Unit,
 ) {
-    val colorScheme = when (themeStyle) {
-        AppThemeStyle.DARK -> DarkColorScheme
-        AppThemeStyle.GRAY -> GrayColorScheme
+    val isSystemDark = isSystemInDarkTheme()
+    val resolved = when (themeMode) {
+        AppThemeMode.AUTO -> {
+            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+            val isNight = hour < 6 || hour >= 18
+            if (isNight || isSystemDark) AppThemeMode.TITANIUM else AppThemeMode.LIGHT
+        }
+        else -> themeMode
+    }
+    
+    val colorScheme = when (resolved) {
+        AppThemeMode.LIGHT -> LightColorScheme
+        AppThemeMode.DARK -> DarkColorScheme
+        AppThemeMode.TITANIUM -> TitaniumColorScheme
+        else -> DarkColorScheme
     }
 
     MaterialTheme(
