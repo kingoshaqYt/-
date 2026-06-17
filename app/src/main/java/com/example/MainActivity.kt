@@ -212,42 +212,53 @@ class MainActivity : ComponentActivity() {
 
             MyApplicationTheme(themeMode = state.themeMode) {
                 val bgColors = when (resolvedTheme) {
-                    AppThemeMode.LIGHT -> listOf(Color(0xFFF8FAFC), Color(0xFFE2E8F0))
-                    AppThemeMode.DARK -> listOf(Color(0xFF0F172A), Color(0xFF020617))
-                    AppThemeMode.TITANIUM -> listOf(Color(0xFFF1F5F9), Color(0xFFCBD5E1))
-                    AppThemeMode.AUTO -> listOf(Color(0xFFF8FAFC), Color(0xFFE2E8F0))
+                    AppThemeMode.LIGHT -> listOf(Color(0xFFF8FAFC).copy(alpha = 0.95f), Color(0xFFE2E8F0).copy(alpha = 0.95f))
+                    AppThemeMode.DARK -> listOf(Color(0xFF0F172A).copy(alpha = 0.95f), Color(0xFF020617).copy(alpha = 0.95f))
+                    AppThemeMode.TITANIUM -> listOf(Color(0xFFF1F5F9).copy(alpha = 0.95f), Color(0xFFCBD5E1).copy(alpha = 0.95f))
+                    AppThemeMode.AUTO -> listOf(Color(0xFFF8FAFC).copy(alpha = 0.95f), Color(0xFFE2E8F0).copy(alpha = 0.95f))
                 }
-                // Removed glowing ambient orbs and neon colors
-                Surface(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Brush.verticalGradient(bgColors))
-                        .paperTexture(alpha = 0.2f)
-                        .depth3D(cornerRadius = 0.dp, isDark = state.isDarkTheme),
-                    color = Color.Transparent
-                ) {
-                    if (!state.isLoggedIn || state.isSplashLoading) {
-                        GoogleLoginAndSplashScreen(vModel, state)
-                    } else if (!state.hasCompletedOnboarding) {
-                        PremiumOnboardingWalkthrough(
-                            vModel = vModel,
-                            state = state,
-                            onComplete = { vModel.setOnboardingCompleted(true) }
-                        )
-                    } else {
-                        Box(modifier = Modifier.fillMaxSize()) {
-                            // Subtle watermark branding logo centered in background
-                            Image(
-                                painter = painterResource(id = R.drawable.img_app_logo_1781241621499),
-                                contentDescription = "RECLAIM ACCOUNTS subtle watermark",
-                                modifier = Modifier
-                                    .size(280.dp)
-                                    .align(Alignment.Center)
-                                    .alpha(0.05f)
+                // Ambient background
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Texture Background
+                    Image(
+                        painter = painterResource(id = R.drawable.pubg_texture_bg_1781676639156),
+                        contentDescription = "PUBG Texture Background",
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .alpha(if (state.isDarkTheme) 0.1f else 0.4f)
+                    )
+                    
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Brush.verticalGradient(bgColors))
+                            .paperTexture(alpha = 0.2f)
+                            .depth3D(cornerRadius = 0.dp, isDark = state.isDarkTheme),
+                        color = Color.Transparent
+                    ) {
+                        if (!state.isLoggedIn || state.isSplashLoading) {
+                            GoogleLoginAndSplashScreen(vModel, state)
+                        } else if (!state.hasCompletedOnboarding) {
+                            PremiumOnboardingWalkthrough(
+                                vModel = vModel,
+                                state = state,
+                                onComplete = { vModel.setOnboardingCompleted(true) }
                             )
-                            // Overlay elements moved to end of box
-
-                            Column(modifier = Modifier.fillMaxSize()) {
+                        } else {
+                            Box(modifier = Modifier.fillMaxSize()) {
+                                // Subtle watermark branding logo centered in background
+                                Image(
+                                    painter = painterResource(id = R.drawable.pubg_helmet_icon_1781676619489),
+                                    contentDescription = "RECLAIM ACCOUNTS subtle watermark",
+                                    modifier = Modifier
+                                        .size(280.dp)
+                                        .align(Alignment.Center)
+                                        .alpha(0.08f)
+                                )
+                                // Overlay elements moved to end of box
+                                
+                                Column(modifier = Modifier.fillMaxSize()) {
                                 // Top Android Status Bar
                                 AndroidStatusBar()
                                 if (state.currentTab != NavigationTab.HOME) {
@@ -6314,7 +6325,7 @@ fun GoogleLoginAndSplashScreen(vModel: ReclaimViewModel, state: ReclaimUiState) 
                     }
 
                     Image(
-                        painter = painterResource(id = R.drawable.helmet_logo),
+                        painter = painterResource(id = R.drawable.pubg_helmet_icon_1781676619489),
                         contentDescription = "PUBG Helmet Logo",
                         modifier = Modifier
                             .size(90.dp)
