@@ -3,13 +3,9 @@ package com.example.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -25,13 +21,15 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.*
+import androidx.compose.ui.geometry.Size
 
 fun Modifier.paperTexture(alpha: Float = 0.08f): Modifier = this.drawWithContent {
     drawContent()
@@ -83,6 +81,16 @@ fun Modifier.paperTexture(alpha: Float = 0.08f): Modifier = this.drawWithContent
     }
 }
 
+fun Modifier.glassBlur(radius: Float = 25f): Modifier = this.then(
+    Modifier.graphicsLayer {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            renderEffect = android.graphics.RenderEffect.createBlurEffect(
+                radius, radius, android.graphics.Shader.TileMode.DECAL
+            ).asComposeRenderEffect()
+        }
+    }
+)
+
 fun Modifier.depth3D(cornerRadius: Dp = 12.dp, isDark: Boolean = true): Modifier = this.drawWithContent {
     drawContent()
     val strokeWidth = 1.25f.dp.toPx()
@@ -123,72 +131,40 @@ enum class GlassIntensity {
 
 fun Modifier.liquidGlass(
     intensity: GlassIntensity = GlassIntensity.MEDIUM,
-    cornerRadius: Dp = 16.dp,
+    cornerRadius: Dp = 20.dp,
     borderGlow: Color = Color(0x6600E5FF),
     isDarkTheme: Boolean? = null
 ): Modifier = composed {
     val dark = isDarkTheme ?: (androidx.compose.material3.MaterialTheme.colorScheme.background.red < 0.5f)
     
-    val alphaBackground = when (intensity) {
-        GlassIntensity.LOW -> 0.08f
-        GlassIntensity.MEDIUM -> 0.04f
-        GlassIntensity.ULTRA -> 0.02f
-    }
+    val bgColor = if (dark) Color.White.copy(0.08f) else Color.White.copy(0.60f)
     
-    val strokeWidth = when (intensity) {
-        GlassIntensity.LOW -> 0.8.dp
-        GlassIntensity.MEDIUM -> 1.0.dp
-        GlassIntensity.ULTRA -> 1.5.dp
-    }
-
     val shadowElevation = when (intensity) {
         GlassIntensity.LOW -> 2.dp
         GlassIntensity.MEDIUM -> 4.dp
         GlassIntensity.ULTRA -> 8.dp
     }
 
-    val bgBrush = if (dark) {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color.White.copy(alpha = alphaBackground),
-                Color.White.copy(alpha = alphaBackground * 0.5f)
-            )
-        )
-    } else {
-        Brush.verticalGradient(
-            colors = listOf(
-                Color.White.copy(alpha = alphaBackground + 0.65f),
-                Color.White.copy(alpha = alphaBackground + 0.45f)
-            )
-        )
+    val shadowColor = if (dark) Color(0x1F000000) else Color(0x3B000000)
+    val shadowSpotColor = if (dark) Color(0x0D00E5FF) else Color(0x1C0A84FF)
+
+    val activeBlurLevel = when (intensity) {
+        GlassIntensity.LOW -> 15f
+        GlassIntensity.MEDIUM -> 30f
+        GlassIntensity.ULTRA -> 50f
     }
 
-    val borderBrush = if (dark) {
-        Brush.linearGradient(
-            colors = listOf(
-                Color.White.copy(alpha = 0.12f),
-                Color.White.copy(alpha = 0.04f),
-                Color.White.copy(alpha = 0.12f),
-                borderGlow.copy(alpha = 0.08f)
-            ),
-            start = Offset.Zero,
-            end = Offset.Infinite
-        )
-    } else {
-        Brush.linearGradient(
-            colors = listOf(
-                Color(0xFF0F172A).copy(alpha = 0.10f),
-                Color(0xFF0F172A).copy(alpha = 0.04f),
-                Color(0xFF0F172A).copy(alpha = 0.10f),
-                borderGlow.copy(alpha = 0.18f)
-            ),
-            start = Offset.Zero,
-            end = Offset.Infinite
-        )
-    }
+    // Smooth Bevel & Inner Glow adapted for Dark/Light Mode
+    val borderAlpha = if (dark) 0.18f else 0.15f
+    val highlightAlpha = if (dark) 0.35f else 0.4f
+    val baseBorderCol = if (dark) Color.White.copy(alpha = borderAlpha) else Color.Black.copy(alpha = borderAlpha)
 
-    val shadowColor = if (dark) Color(0x1F000000) else Color(0x0F000000)
-    val shadowSpotColor = if (dark) Color(0x0D00E5FF) else Color(0x080582FF)
+    val bevelBorderBrush = Brush.verticalGradient(
+        colors = listOf(
+            Color.White.copy(alpha = highlightAlpha), // beautiful top lighting catch
+            baseBorderCol   // fades to main border color
+        )
+    )
 
     this
         .shadow(
@@ -198,18 +174,16 @@ fun Modifier.liquidGlass(
             ambientColor = shadowColor,
             spotColor = shadowSpotColor
         )
+        .clip(RoundedCornerShape(cornerRadius))
         .background(
-            brush = bgBrush,
+            color = bgColor,
             shape = RoundedCornerShape(cornerRadius)
         )
         .border(
-            width = strokeWidth,
-            brush = borderBrush,
+            width = 1.dp,
+            brush = bevelBorderBrush,
             shape = RoundedCornerShape(cornerRadius)
         )
-        .clip(RoundedCornerShape(cornerRadius))
-        .paperTexture(alpha = if (intensity == GlassIntensity.ULTRA) 0.03f else 0.05f)
-        .depth3D(cornerRadius = cornerRadius, isDark = dark)
 }
 
 fun Modifier.glowingAmbientOrbs(): Modifier {
@@ -275,4 +249,50 @@ fun Modifier.bounceClick(
             indication = androidx.compose.foundation.LocalIndication.current,
             onClick = onClick
         )
+}
+
+fun Modifier.premiumShineEffect(
+    showShine: Boolean = true,
+    durationMillis: Int = 3000
+): Modifier = composed {
+    if (!showShine) return@composed this
+
+    val shimmerColors = listOf(
+        Color.White.copy(alpha = 0.0f),
+        Color.White.copy(alpha = 0.3f), // Bright light beam
+        Color.White.copy(alpha = 0.0f)
+    )
+
+    val transition = rememberInfiniteTransition(label = "shine")
+    val translateAnimation = transition.animateFloat(
+        initialValue = 0f,
+        targetValue = 1000f, // Need big enough travel for diagonal
+        animationSpec = infiniteRepeatable(
+            animation = tween(
+                durationMillis = durationMillis,
+                easing = FastOutSlowInEasing,
+                delayMillis = 1000 // pause between shines
+            ),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "shine_translate"
+    )
+
+    this.drawWithContent {
+        drawContent()
+        val width = size.width
+        val height = size.height
+
+        // Calculate a 45 degree angle using actual dimensions
+        val diagonal = kotlin.math.sqrt(width * width + height * height)
+        val xTranslate = (translateAnimation.value / 1000f) * (diagonal * 2f) - diagonal
+
+        drawRect(
+            brush = Brush.linearGradient(
+                colors = shimmerColors,
+                start = Offset(xTranslate - 50f, xTranslate - 50f),
+                end = Offset(xTranslate + 50f, xTranslate + 50f)
+            )
+        )
+    }
 }

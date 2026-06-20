@@ -1,3 +1,6 @@
+import java.net.URL
+import java.io.File
+
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.compose)
@@ -5,6 +8,18 @@ plugins {
   alias(libs.plugins.roborazzi)
   alias(libs.plugins.secrets)
   alias(libs.plugins.google.gms.google.services)
+}
+
+try {
+  val iconDest = File(projectDir, "src/main/res/drawable/app_icon_downloaded.jpg")
+  iconDest.parentFile.mkdirs()
+  URL("https://i.postimg.cc/HWBVnN0n/134627589-1781697303683007.jpg").openStream().use { input ->
+    iconDest.outputStream().use { output ->
+      input.copyTo(output)
+    }
+  }
+} catch (e: Exception) {
+  println("Failed to download app icon: ${e.message}")
 }
 
 

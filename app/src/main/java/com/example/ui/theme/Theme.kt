@@ -52,9 +52,7 @@ fun MyApplicationTheme(
     val isSystemDark = isSystemInDarkTheme()
     val resolved = when (themeMode) {
         AppThemeMode.AUTO -> {
-            val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-            val isNight = hour < 6 || hour >= 18
-            if (isNight || isSystemDark) AppThemeMode.TITANIUM else AppThemeMode.LIGHT
+            if (isSystemDark) AppThemeMode.DARK else AppThemeMode.LIGHT
         }
         else -> themeMode
     }

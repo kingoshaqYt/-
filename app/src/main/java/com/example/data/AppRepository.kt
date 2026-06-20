@@ -54,6 +54,38 @@ class AppRepository {
         }
     }
 
+    suspend fun deleteSupabaseSlider(imageUrl: String) {
+        try {
+            supabaseApi.deleteSlider(
+                apiKey = supabaseKey,
+                bearerToken = "Bearer $supabaseKey",
+                imageEq = "eq.$imageUrl"
+            )
+        } catch (e: Exception) {
+            Log.e("AppRepository", "Error deleting slider: ${e.message}", e)
+            throw e
+        }
+    }
+
+    suspend fun addSupabaseSlider(imageUrl: String, linkUrl: String) {
+        try {
+            val payload = mapOf(
+                "image" to imageUrl,
+                "link" to linkUrl,
+                "title" to "New Admin Banner",
+                "badge" to "NEW"
+            )
+            supabaseApi.insertSlider(
+                apiKey = supabaseKey,
+                bearerToken = "Bearer $supabaseKey",
+                slider = payload
+            )
+        } catch (e: Exception) {
+            Log.e("AppRepository", "Error adding slider: ${e.message}", e)
+            throw e
+        }
+    }
+
     suspend fun fetchFirebaseLiveActivity(): List<LiveActivityItem> {
         return try {
             val list = firebaseApi.getLiveActivity()

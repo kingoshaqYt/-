@@ -99,6 +99,7 @@ data class ReclaimUiState(
     val streakDays: Int = 0,
     val trialTimeRemainingSeconds: Int = 86400, // 24 hours
     val trialTimeRemainingText: String = "23h 59m 54s",
+    val hasSeenAutoClaimPopup: Boolean = false,
     
     //Countdown to "Next Major Update" 14 July 2026
     val updateDays: Int = 31,
@@ -217,7 +218,48 @@ data class ReclaimUiState(
 
     // Real-time globally synced news & updates
     val systemUpdates: List<SystemUpdate> = emptyList(),
-    val isAdminMode: Boolean = false
+    val isAdminMode: Boolean = false,
+    
+    // Admin list of users and active promo codes
+    val adminUsers: List<AdminUserItem> = emptyList(),
+    val adminPromoCodes: List<PromoCode> = emptyList(),
+    val userRank: String = "Silver Recruit",
+    val userRole: String = "User",
+    
+    // Account Verification status
+    val accountStatus: String = "Pending",
+    val isVerified: Boolean = false,
+    
+    // Custom Popups of Reclaim status and screens
+    val showRejectedPopup: Boolean = false,
+    val showCompletedPopup: Boolean = false,
+    val showMyRewardsScreen: Boolean = false,
+    
+    // Community Reports
+    val communityReports: List<CommunityReport> = emptyList(),
+    val searchedBanStatus: String? = null,
+    val searchedBanReason: String? = null,
+    val searchedAppealAvailable: Boolean = false,
+
+    // Live Popups
+    val liveAdminPopup: LiveAdminPopup? = null
+)
+
+data class LiveAdminPopup(
+    val title: String,
+    val message: String,
+    val targetAudience: String,
+    val timestamp: Long
+)
+
+data class CommunityReport(
+    val reportId: String = "",
+    val uid: String = "",
+    val banReason: String = "",
+    val status: String = "Pending Review", // "Pending Review", "Verified", "Rejected"
+    val isPremiumVerified: Boolean = false,
+    val submittedBy: String = "",
+    val timestamp: Long = 0L
 )
 
 enum class NavigationTab {
@@ -299,12 +341,56 @@ class ReclaimViewModel : ViewModel() {
     private var casesListener: com.google.firebase.firestore.ListenerRegistration? = null
     private var messagesListener: com.google.firebase.firestore.ListenerRegistration? = null
     private var updatesListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var profilesListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var promoCodesListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var userProfileListener: com.google.firebase.firestore.ListenerRegistration? = null
 
     init {
         loadData()
         startCountdownTimer()
         startTelemetryFluctuator()
         startListeningToUpdates()
+        startListeningToPopups()
+        startListeningToReports()
+        seedAdminsCollection()
+    }
+
+    fun isUserAdminFallback(email: String): Boolean {
+        // Fallback or quick check used before Firebase Role System fully loads
+        val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
+        val currentAuthEmail = auth.currentUser?.email ?: email
+        // Real-time permission is validated in Firebase Admin Collection, this is an initial UI unlock check
+        return currentAuthEmail.endsWith("@reclaimaccounts.com") ||
+               currentAuthEmail.equals("oshaqplayz@gmail.com", ignoreCase = true) ||
+               currentAuthEmail.equals("oshaqyt2@gmail.com", ignoreCase = true) ||
+               currentAuthEmail.equals("oshaqali722@gmail.com", ignoreCase = true)
+    }
+
+    private fun startListeningToPopups() {
+        FirebaseFirestore.getInstance().collection("admin_popups").document("global_live_popup")
+            .addSnapshotListener { doc, _ ->
+                if (doc != null && doc.exists()) {
+                    val title = doc.getString("title") ?: return@addSnapshotListener
+                    val message = doc.getString("message") ?: return@addSnapshotListener
+                    val targetAudience = doc.getString("targetAudience") ?: "All Users"
+                    val timestamp = doc.getLong("timestamp") ?: 0L
+                    
+                    val currentState = _uiState.value
+                    
+                    // Filter logic
+                    val currentRole = currentState.userRole
+                    val isMatch = targetAudience == "All Users" || targetAudience.equals(currentRole, ignoreCase = true)
+                    
+                    if (isMatch) {
+                        // Check if popup is recent (less than 5 minutes old) to prevent stale popups on launch
+                        if (System.currentTimeMillis() - timestamp < 300000) {
+                            _uiState.update { 
+                                it.copy(liveAdminPopup = LiveAdminPopup(title, message, targetAudience, timestamp)) 
+                            }
+                        }
+                    }
+                }
+            }
     }
 
     private fun loadData() {
@@ -514,9 +600,7 @@ class ReclaimViewModel : ViewModel() {
     fun getActiveThemeMode(mode: AppThemeMode, isSystemDark: Boolean): AppThemeMode {
         return when (mode) {
             AppThemeMode.AUTO -> {
-                val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
-                val isNight = hour < 6 || hour >= 18
-                if (isNight || isSystemDark) AppThemeMode.TITANIUM else AppThemeMode.LIGHT
+                if (isSystemDark) AppThemeMode.DARK else AppThemeMode.LIGHT
             }
             else -> mode
         }
@@ -540,14 +624,13 @@ class ReclaimViewModel : ViewModel() {
         }
     }
 
-    fun toggleTheme() {
+    fun toggleTheme(isSystemDark: Boolean = false) {
         val nextMode = when (_uiState.value.themeMode) {
             AppThemeMode.LIGHT -> AppThemeMode.DARK
-            AppThemeMode.DARK -> AppThemeMode.TITANIUM
-            AppThemeMode.TITANIUM -> AppThemeMode.AUTO
-            AppThemeMode.AUTO -> AppThemeMode.LIGHT
+            AppThemeMode.DARK -> AppThemeMode.AUTO
+            else -> AppThemeMode.LIGHT
         }
-        setThemeMode(nextMode)
+        setThemeMode(nextMode, isSystemDark)
     }
 
     fun setThemeStyle(style: AppThemeStyle) {
@@ -590,6 +673,10 @@ class ReclaimViewModel : ViewModel() {
     }
 
     fun claimDailyBox() {
+        if (_uiState.value.accountStatus == "Pending Verification") {
+            showToast("Rewards are restricted until your account is verified.", "WARNING")
+            return
+        }
         val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
         if (_uiState.value.lastClaimDate == today) return
 
@@ -685,6 +772,10 @@ class ReclaimViewModel : ViewModel() {
 
     fun claimOneTimeReward(): Boolean {
         val state = _uiState.value
+        if (state.accountStatus == "Pending Verification") {
+            showToast("Rewards are restricted until your account is verified.", "WARNING")
+            return false
+        }
         if (state.isGuest) {
             showToast("RESTRICTED: PLEASE REGISTER OR SIGN IN TO CLAIM REWARDS!", "WARNING")
             return false
@@ -715,26 +806,120 @@ class ReclaimViewModel : ViewModel() {
             showToast("RESTRICTED: PLEASE SIGN IN TO REDEEM PROMO CODES!", "WARNING")
             return false
         }
-        if (uppercaseCode in state.redeemedPromoCodes) {
-            showToast("ERROR: CODE '$uppercaseCode' ALREADY REDEEMED BY YOU!", "ERROR")
-            return false
-        }
-        val validCodes = listOf("RECLAIM70", "OSHAG70", "FREE70", "BONUS70", "RECLAIM", "OSHAG", "CHEATS")
-        val isValid = uppercaseCode in validCodes || uppercaseCode.endsWith("70")
-        if (isValid) {
-            _uiState.update {
-                it.copy(
-                    userCredits = it.userCredits + 70,
-                    redeemedPromoCodes = it.redeemedPromoCodes + uppercaseCode
-                )
+
+        val auth = FirebaseAuth.getInstance()
+        val uid = auth.currentUser?.uid ?: return false
+
+        FirebaseFirestore.getInstance().collection("promo_codes").document(uppercaseCode)
+            .get()
+            .addOnSuccessListener { doc ->
+                if (doc.exists()) {
+                    val reward = doc.getLong("reward")?.toInt() ?: doc.getDouble("reward")?.toInt() ?: 0
+                    val expiryDateStr = doc.getString("expiryDate") ?: ""
+                    val usageLimit = doc.getLong("usageLimit")?.toInt() ?: doc.getDouble("usageLimit")?.toInt() ?: 100
+                    val timesRedeemed = doc.getLong("timesRedeemed")?.toInt() ?: doc.getDouble("timesRedeemed")?.toInt() ?: 0
+                    val isSingleUse = doc.getBoolean("singleUse") ?: doc.getBoolean("isSingleUse") ?: false
+                    val redeemedByUsers = doc.get("redeemedByUsers") as? List<Any> ?: emptyList()
+                    val redeemedByUids = redeemedByUsers.map { it.toString() }
+
+                    // Validate expiry (format YYYY-MM-DD)
+                    var isExpired = false
+                    if (expiryDateStr.isNotBlank()) {
+                        try {
+                            val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US)
+                            val expiryDate = sdf.parse(expiryDateStr)
+                            if (expiryDate != null && expiryDate.before(java.util.Date())) {
+                                isExpired = true
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ReclaimViewModel", "Expiry parse error: ${e.message}")
+                        }
+                    }
+
+                    if (isExpired) {
+                        showToast("ERROR: PROMO CODE '$uppercaseCode' HAS EXPIRED!", "ERROR")
+                        return@addOnSuccessListener
+                    }
+
+                    if (timesRedeemed >= usageLimit) {
+                        showToast("ERROR: PROMO CODE USAGE LIMIT REACHED!", "ERROR")
+                        return@addOnSuccessListener
+                    }
+
+                    if (isSingleUse && uid in redeemedByUids) {
+                        showToast("ERROR: CODE '$uppercaseCode' ALREADY REDEEMED BY YOU!", "ERROR")
+                        return@addOnSuccessListener
+                    }
+
+                    if (uppercaseCode in _uiState.value.redeemedPromoCodes) {
+                        showToast("ERROR: CODE '$uppercaseCode' ALREADY REDEEMED BY YOU!", "ERROR")
+                        return@addOnSuccessListener
+                    }
+
+                    val updatedRedeemedList = redeemedByUids + uid
+                    val promoUpdates = hashMapOf<String, Any>(
+                        "timesRedeemed" to (timesRedeemed + 1),
+                        "redeemedByUsers" to updatedRedeemedList
+                    )
+
+                    FirebaseFirestore.getInstance().collection("promo_codes").document(uppercaseCode)
+                        .update(promoUpdates)
+                        .addOnSuccessListener {
+                            _uiState.update { s ->
+                                s.copy(
+                                    userCredits = s.userCredits + reward,
+                                    redeemedPromoCodes = s.redeemedPromoCodes + uppercaseCode
+                                )
+                            }
+                            syncCreditsToFirebase()
+                            showToast("PROMO CODE '$uppercaseCode' ACCEPTED! +$reward CREDITS!", "SUCCESS")
+                        }
+                        .addOnFailureListener { e ->
+                            showToast("Failed to redeem: ${e.message}", "ERROR")
+                        }
+                } else {
+                    // Seed defaults if one of standard promo codes is entered
+                    val defaults = mapOf(
+                        "RECLAIM70" to 70,
+                        "OSHAG70" to 70,
+                        "FREE70" to 70,
+                        "BONUS70" to 70,
+                        "RECLAIM" to 50,
+                        "OSHAG" to 50,
+                        "CHEATS" to 150
+                    )
+                    if (uppercaseCode in defaults.keys) {
+                        val rewardVal = defaults[uppercaseCode] ?: 70
+                        val data = hashMapOf<String, Any>(
+                            "code" to uppercaseCode,
+                            "reward" to rewardVal,
+                            "expiryDate" to "2028-12-31",
+                            "usageLimit" to 1000,
+                            "timesRedeemed" to 1,
+                            "singleUse" to true,
+                            "redeemedByUsers" to listOf(uid)
+                        )
+                        FirebaseFirestore.getInstance().collection("promo_codes").document(uppercaseCode)
+                            .set(data)
+                            .addOnSuccessListener {
+                                _uiState.update { s ->
+                                    s.copy(
+                                        userCredits = s.userCredits + rewardVal,
+                                        redeemedPromoCodes = s.redeemedPromoCodes + uppercaseCode
+                                    )
+                                }
+                                syncCreditsToFirebase()
+                                showToast("PROMO CODE '$uppercaseCode' ACCEPTED! +$rewardVal CREDITS!", "SUCCESS")
+                            }
+                    } else {
+                        showToast("INVALID PROMO CODE, PLEASE TRY AGAIN.", "ERROR")
+                    }
+                }
             }
-            syncCreditsToFirebase()
-            showToast("SUCCESS: PROMO CODE '$uppercaseCode' REDEEMED! +70 DETAILS CREDITS!", "SUCCESS")
-            return true
-        } else {
-            showToast("INVALID PROMO CODE, PLEASE TRY AGAIN.", "ERROR")
-            return false
-        }
+            .addOnFailureListener { e ->
+                showToast("Verification failed: ${e.message}", "ERROR")
+            }
+        return true
     }
 
     fun refreshProbability() {
@@ -793,10 +978,16 @@ class ReclaimViewModel : ViewModel() {
     }
 
     fun togglePremiumModal(show: Boolean) {
+        if (show && _uiState.value.accountStatus == "Pending Verification") {
+            showToast("Premium features are locked until account is verified.", "WARNING")
+            return
+        }
         _uiState.update { it.copy(showPremiumModal = show) }
     }
 
     fun logout() {
+        userProfileListener?.remove()
+        userProfileListener = null
         _uiState.update { 
             it.copy(
                 isLoggedIn = false,
@@ -823,6 +1014,10 @@ class ReclaimViewModel : ViewModel() {
     }
 
     fun spendCredits(amount: Int): Boolean {
+        if (_uiState.value.accountStatus == "Pending Verification") {
+            showToast("Action restricted to Verified Users.", "ERROR")
+            return false
+        }
         var success = false
         _uiState.update { state ->
             if (state.isGuest) {
@@ -901,6 +1096,26 @@ class ReclaimViewModel : ViewModel() {
         _uiState.update { state ->
             state.copy(userNotificationLogs = state.userNotificationLogs.filter { it.id != id })
         }
+    }
+
+    fun dismissRejectedPopup() {
+        _uiState.update { it.copy(showRejectedPopup = false) }
+    }
+
+    fun dismissCompletedPopup() {
+        _uiState.update { it.copy(showCompletedPopup = false) }
+    }
+
+    fun dismissAutoClaimPopup() {
+        _uiState.update { it.copy(hasSeenAutoClaimPopup = true) }
+    }
+
+    fun dismissLivePopup() {
+        _uiState.update { it.copy(liveAdminPopup = null) }
+    }
+
+    fun toggleMyRewardsScreen() {
+        _uiState.update { it.copy(showMyRewardsScreen = !it.showMyRewardsScreen) }
     }
 
     fun markNotificationAsRead(id: String) {
@@ -1245,6 +1460,7 @@ class ReclaimViewModel : ViewModel() {
                     googleAccountName = name
                 )
             }
+            startListeningToUserProfile(currentUser.uid, context)
             val handleSessionFallback = {
                 val prefs = context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE)
                 val pName = prefs.getString("saved_playerName", "") ?: ""
@@ -1299,8 +1515,11 @@ class ReclaimViewModel : ViewModel() {
                             val pName = doc.getString("playerName") ?: ""
                             val pUid = doc.getString("playerUid") ?: ""
                             val pLogo = doc.getString("profileLogoUri") ?: ""
-                            val creditsVal = doc.getLong("userCredits")?.toInt() ?: doc.getDouble("userCredits")?.toInt() ?: 50
+                            val creditsVal = doc.getLong("credits")?.toInt() ?: doc.getDouble("credits")?.toInt() ?: doc.getLong("userCredits")?.toInt() ?: doc.getDouble("userCredits")?.toInt() ?: 50
                             val claimedOneTime = doc.getBoolean("hasClaimedOneTimeReward") ?: false
+                            val statusVal = doc.getString("status") ?: "Pending Verification"
+                            val verifiedVal = doc.getBoolean("verified") ?: false
+                            val rankVal = doc.getString("userRank") ?: "Silver Recruit"
                             val redeemedList = doc.get("redeemedPromoCodes") as? List<Any> ?: emptyList()
                             val redeemed = redeemedList.map { it.toString() }
                             
@@ -1310,6 +1529,9 @@ class ReclaimViewModel : ViewModel() {
                                     targetPlayerUid = pUid,
                                     profileLogoUri = pLogo.ifBlank { null },
                                     userCredits = creditsVal,
+                                    accountStatus = statusVal,
+                                    isVerified = verifiedVal,
+                                    userRank = rankVal,
                                     hasClaimedOneTimeReward = claimedOneTime,
                                     redeemedPromoCodes = redeemed,
                                     hasCompletedProfileSetup = pName.isNotEmpty() && pUid.isNotEmpty(),
@@ -1446,8 +1668,11 @@ class ReclaimViewModel : ViewModel() {
                             val pName = doc.getString("playerName") ?: ""
                             val pUid = doc.getString("playerUid") ?: ""
                             val pLogo = doc.getString("profileLogoUri") ?: ""
-                            val creditsVal = doc.getLong("userCredits")?.toInt() ?: doc.getDouble("userCredits")?.toInt() ?: 50
+                            val creditsVal = doc.getLong("credits")?.toInt() ?: doc.getDouble("credits")?.toInt() ?: doc.getLong("userCredits")?.toInt() ?: doc.getDouble("userCredits")?.toInt() ?: 50
                             val claimedOneTime = doc.getBoolean("hasClaimedOneTimeReward") ?: false
+                            val statusVal = doc.getString("status") ?: "Pending Verification"
+                            val verifiedVal = doc.getBoolean("verified") ?: false
+                            val rankVal = doc.getString("userRank") ?: "Silver Recruit"
                             val redeemedList = doc.get("redeemedPromoCodes") as? List<Any> ?: emptyList()
                             val redeemed = redeemedList.map { it.toString() }
 
@@ -1457,6 +1682,9 @@ class ReclaimViewModel : ViewModel() {
                                     targetPlayerUid = pUid,
                                     profileLogoUri = pLogo.ifBlank { null },
                                     userCredits = creditsVal,
+                                    accountStatus = statusVal,
+                                    isVerified = verifiedVal,
+                                    userRank = rankVal,
                                     hasClaimedOneTimeReward = claimedOneTime,
                                     redeemedPromoCodes = redeemed,
                                     hasCompletedProfileSetup = pName.isNotEmpty() && pUid.isNotEmpty(),
@@ -1632,6 +1860,7 @@ class ReclaimViewModel : ViewModel() {
                 googleAccountName = name
             )
         }
+        startListeningToUserProfile(uid, context)
         
         val profile = hashMapOf(
             "userId" to uid,
@@ -1720,7 +1949,10 @@ class ReclaimViewModel : ViewModel() {
                         "playerUid" to playerUid,
                         "loginMethod" to loginMethod,
                         "creationDate" to java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()),
-                        "deviceInfo" to "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+                        "deviceInfo" to "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                        "status" to "Pending",
+                        "verified" to false,
+                        "credits" to 50
                     )
                     repository.rtdbSaveProfile(uid, profile)
                     _uiState.update {
@@ -1770,7 +2002,10 @@ class ReclaimViewModel : ViewModel() {
                                     "playerUid" to playerUid,
                                     "loginMethod" to loginMethod,
                                     "creationDate" to java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date()),
-                                    "deviceInfo" to "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+                                    "deviceInfo" to "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                                    "status" to "Pending",
+                                    "verified" to false,
+                                    "credits" to 50
                                 )
                                 db.collection("reclaim_profiles").document(uid).set(profile)
                                     .addOnSuccessListener {
@@ -2254,6 +2489,166 @@ class ReclaimViewModel : ViewModel() {
         }
     }
 
+    fun triggerLocalNotification(context: android.content.Context, title: String, body: String) {
+        try {
+            val channelId = "reclaim_alerts_channel"
+            val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    channelId,
+                    "Reclaim System Alerts",
+                    android.app.NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "Alerts regarding account restoration status changes"
+                }
+                notificationManager.createNotificationChannel(channel)
+            }
+            
+            val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                
+            notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
+        } catch (e: Exception) {
+            Log.e("NotificationHelper", "Failed to show local notification: ${e.message}")
+        }
+    }
+
+    fun startListeningToUserProfile(uid: String, context: android.content.Context) {
+        userProfileListener?.remove()
+        userProfileListener = FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    return@addSnapshotListener
+                }
+                if (snapshot != null && snapshot.exists()) {
+                    val pName = snapshot.getString("playerName") ?: snapshot.getString("googleAccountName") ?: ""
+                    val pUid = snapshot.getString("playerUid") ?: ""
+                    val pLogo = snapshot.getString("profileLogoUri") ?: ""
+                    val creditsVal = snapshot.getLong("credits")?.toInt() ?: snapshot.getDouble("credits")?.toInt() ?: snapshot.getLong("userCredits")?.toInt() ?: snapshot.getDouble("userCredits")?.toInt() ?: 50
+                    val claimedOneTime = snapshot.getBoolean("hasClaimedOneTimeReward") ?: false
+                    val statusVal = snapshot.getString("status") ?: "Pending"
+                    val verifiedVal = snapshot.getBoolean("verified") ?: false
+                    val rankVal = snapshot.getString("userRank") ?: "Silver Recruit"
+                    val roleVal = snapshot.getString("userRole") ?: "User"
+                    val redeemedList = snapshot.get("redeemedPromoCodes") as? List<Any> ?: emptyList()
+                    val redeemed = redeemedList.map { it.toString() }
+                    
+                    val lastClaim = snapshot.getString("lastClaimDate") ?: ""
+                    val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+                    val claimedToday = (lastClaim == todayStr)
+                    val streak = snapshot.getLong("streakDays")?.toInt() ?: snapshot.getDouble("streakDays")?.toInt() ?: _uiState.value.streakDays
+                    
+                    val oldStatus = _uiState.value.accountStatus
+                    val statusChanged = (oldStatus.isNotEmpty() && oldStatus != statusVal && oldStatus != "Pending Verification")
+                    
+                    val shouldShowRejected = (statusVal == "Rejected" && oldStatus != "Rejected")
+                    val shouldShowCompleted = (statusVal == "Completed" && oldStatus != "Completed")
+
+                    _uiState.update {
+                        it.copy(
+                            targetPlayerName = pName,
+                            targetPlayerUid = pUid,
+                            profileLogoUri = pLogo.ifBlank { null },
+                            userCredits = creditsVal,
+                            accountStatus = statusVal,
+                            isVerified = verifiedVal,
+                            userRank = rankVal,
+                            userRole = roleVal,
+                            hasClaimedOneTimeReward = claimedOneTime,
+                            lastClaimDate = lastClaim,
+                            hasClaimedToday = claimedToday,
+                            streakDays = streak,
+                            redeemedPromoCodes = redeemed,
+                            hasCompletedProfileSetup = pName.isNotEmpty() && pUid.isNotEmpty(),
+                            hasCompletedOnboarding = true,
+                            showRejectedPopup = if (shouldShowRejected) true else it.showRejectedPopup,
+                            showCompletedPopup = if (shouldShowCompleted) true else it.showCompletedPopup
+                        )
+                    }
+
+                    if (statusChanged) {
+                        val notificationTitle = when (statusVal) {
+                            "Verified" -> "Account Verified! 🎉"
+                            "Completed" -> "Restoration Completed! 🏆"
+                            "Rejected" -> "Verification Rejected ⚠️"
+                            else -> "Appeal Status Updated"
+                        }
+                        val notificationBody = when (statusVal) {
+                            "Verified" -> "Your PUBG character appeal is now verified. +100 Credits added."
+                            "Completed" -> "Congratulations! Your account has been successfully unbanned."
+                            "Rejected" -> "Your authentication appeal was rejected by security auditors."
+                            else -> "Your status changed to $statusVal."
+                        }
+                        triggerLocalNotification(context.applicationContext, notificationTitle, notificationBody)
+                    }
+                }
+            }
+    }
+
+    fun seedAdminsCollection() {
+        val firestore = FirebaseFirestore.getInstance()
+        val adminEmails = listOf("admin@gmail.com", "admin@reclaimaccounts.com", "oshaqplayz@gmail.com", "oshaqyt2@gmail.com", "oshaqali722@gmail.com")
+        for (email in adminEmails) {
+            val adminDoc = hashMapOf(
+                "email" to email,
+                "role" to "Super Admin",
+                "creationDate" to java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+            )
+            firestore.collection("admins").document(email.lowercase())
+                .set(adminDoc, com.google.firebase.firestore.SetOptions.merge())
+                .addOnSuccessListener {
+                    Log.d("FirestoreSeeding", "Admin entry $email seeded successfully.")
+                }
+        }
+    }
+
+    fun claimDailyReward(context: android.content.Context) {
+        val auth = FirebaseAuth.getInstance()
+        val currentUser = auth.currentUser
+        val userUid = currentUser?.uid ?: "google_${(_uiState.value.googleAccountEmail ?: "guest").hashCode()}"
+        val newCredits = _uiState.value.userCredits + 25
+        val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+        val newStreak = _uiState.value.streakDays + 1
+        
+        val updates = hashMapOf<String, Any>(
+            "credits" to newCredits,
+            "lastClaimDate" to todayStr,
+            "hasClaimedToday" to true,
+            "streakDays" to newStreak
+        )
+        
+        FirebaseFirestore.getInstance().collection("reclaim_profiles").document(userUid)
+            .update(updates)
+            .addOnSuccessListener {
+                _uiState.update { 
+                    it.copy(
+                        userCredits = newCredits,
+                        hasClaimedToday = true,
+                        lastClaimDate = todayStr,
+                        streakDays = newStreak
+                    )
+                }
+                showToast("Claimed Daily Check-in: +25 Secure Coins!", "SUCCESS")
+                triggerLocalNotification(context.applicationContext, "Restoration Daily Reward 🎁", "You claimed +25 secure coins! Keep your streak active.")
+            }
+            .addOnFailureListener {
+                _uiState.update { 
+                    it.copy(
+                        userCredits = newCredits,
+                        hasClaimedToday = true,
+                        lastClaimDate = todayStr,
+                        streakDays = newStreak
+                    )
+                }
+                showToast("Check-in saved locally: +25 Secure Coins!", "SUCCESS")
+            }
+    }
+
     fun addSystemUpdate(title: String, description: String, context: android.content.Context) {
         val id = java.util.UUID.randomUUID().toString()
         val data = hashMapOf(
@@ -2286,12 +2681,440 @@ class ReclaimViewModel : ViewModel() {
     }
 
     fun toggleAdminMode(enabled: Boolean) {
-        _uiState.update { it.copy(isAdminMode = enabled) }
-        if (enabled) {
-            startListeningToAllCasesForAdmin()
-        } else {
+        if (!enabled) {
+            _uiState.update { it.copy(isAdminMode = false) }
+            profilesListener?.remove()
+            profilesListener = null
+            promoCodesListener?.remove()
+            promoCodesListener = null
             startListeningToCases()
+            return
         }
+        
+        val userEmail = _uiState.value.googleAccountEmail
+        if (userEmail.isNullOrBlank()) {
+            showToast("Authorize first to access administrator systems.", "WARNING")
+            return
+        }
+        
+        _uiState.update { it.copy(isAuthOperationLoading = true) }
+        FirebaseFirestore.getInstance().collection("admins").document(userEmail.lowercase())
+            .get()
+            .addOnSuccessListener { doc ->
+                _uiState.update { it.copy(isAuthOperationLoading = false) }
+                if (doc.exists()) {
+                    _uiState.update { it.copy(isAdminMode = true) }
+                    startListeningToAllCasesForAdmin()
+                    startListeningToAllUserProfiles()
+                    startListeningToAllPromoCodes()
+                    showToast("Super Admin Mode Verified!", "SUCCESS")
+                } else {
+                    showToast("ACCESS DENIED: User is not configured as Super Admin in Firestore.", "ERROR")
+                }
+            }
+            .addOnFailureListener {
+                _uiState.update { it.copy(isAuthOperationLoading = false) }
+                showToast("Admin verification failed: ${it.localizedMessage}", "ERROR")
+            }
+    }
+
+    fun startListeningToAllUserProfiles() {
+        if (!_uiState.value.isAdminMode) return
+        try {
+            profilesListener?.remove()
+            profilesListener = FirebaseFirestore.getInstance().collection("reclaim_profiles")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val list = snapshot.documents.mapNotNull { doc ->
+                            val uid = doc.id
+                            val playerName = doc.getString("playerName") ?: doc.getString("targetPlayerName") ?: ""
+                            val playerUid = doc.getString("playerUid") ?: doc.getString("targetPlayerUid") ?: ""
+                            val userCredits = doc.getLong("credits")?.toInt() ?: doc.getDouble("credits")?.toInt() ?: doc.getLong("userCredits")?.toInt() ?: doc.getDouble("userCredits")?.toInt() ?: 50
+                            val status = doc.getString("status") ?: doc.getString("accountStatus") ?: "Pending Verification"
+                            val verified = doc.getBoolean("verified") ?: doc.getBoolean("isVerified") ?: false
+                            val userRank = doc.getString("userRank") ?: "Silver Recruit"
+                            val userRole = doc.getString("userRole") ?: "User"
+                            val googleAccountName = doc.getString("googleAccountName") ?: doc.getString("playerName")
+                            val googleAccountEmail = doc.getString("googleAccountEmail")
+                            AdminUserItem(
+                                uid = uid,
+                                playerName = playerName,
+                                playerUid = playerUid,
+                                userCredits = userCredits,
+                                status = status,
+                                verified = verified,
+                                userRank = userRank,
+                                userRole = userRole,
+                                googleAccountName = googleAccountName,
+                                googleAccountEmail = googleAccountEmail
+                            )
+                        }
+                        _uiState.update { it.copy(adminUsers = list) }
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firebase error in startListeningToAllUserProfiles: ${e.message}")
+        }
+    }
+
+    fun startListeningToAllPromoCodes() {
+        if (!_uiState.value.isAdminMode) return
+        try {
+            promoCodesListener?.remove()
+            promoCodesListener = FirebaseFirestore.getInstance().collection("promo_codes")
+                .addSnapshotListener { snapshot, error ->
+                    if (error != null) {
+                        return@addSnapshotListener
+                    }
+                    if (snapshot != null) {
+                        val list = snapshot.documents.mapNotNull { doc ->
+                            val code = doc.id
+                            val reward = doc.getLong("reward")?.toInt() ?: doc.getDouble("reward")?.toInt() ?: 0
+                            val expiryDate = doc.getString("expiryDate") ?: ""
+                            val usageLimit = doc.getLong("usageLimit")?.toInt() ?: doc.getDouble("usageLimit")?.toInt() ?: 100
+                            val timesRedeemed = doc.getLong("timesRedeemed")?.toInt() ?: doc.getDouble("timesRedeemed")?.toInt() ?: 0
+                            val isSingleUse = doc.getBoolean("singleUse") ?: doc.getBoolean("isSingleUse") ?: false
+                            val redeemedByUsers = doc.get("redeemedByUsers") as? List<Any> ?: emptyList()
+                            PromoCode(
+                                code = code,
+                                reward = reward,
+                                expiryDate = expiryDate,
+                                usageLimit = usageLimit,
+                                timesRedeemed = timesRedeemed,
+                                isSingleUse = isSingleUse,
+                                redeemedByUsers = redeemedByUsers.map { it.toString() }
+                            )
+                        }
+                        _uiState.update { it.copy(adminPromoCodes = list) }
+                    }
+                }
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firebase error in startListeningToAllPromoCodes: ${e.message}")
+        }
+    }
+
+    fun adminUpdateUserFields(
+        userUid: String,
+        updatedCredits: Int?,
+        updatedUsername: String?,
+        updatedPlayerUid: String?,
+        updatedPlayerName: String?,
+        updatedStatus: String?,
+        updatedVerified: Boolean?,
+        updatedRank: String?,
+        updatedRole: String? = null
+    ) {
+        if (!_uiState.value.isAdminMode) return
+        val updates = hashMapOf<String, Any>()
+        
+        var finalCredits = updatedCredits
+        var isVerifying = false
+        
+        if (updatedStatus != null) {
+            updates["status"] = updatedStatus
+            if (updatedStatus == "Verified" || updatedStatus == "Completed" || updatedStatus == "Active") {
+                isVerifying = true
+                updates["verified"] = true
+                updates["verificationTime"] = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+                // Automatic Reward: +100 credits upon verification
+                finalCredits = (updatedCredits ?: 50) + 100
+            } else if (updatedStatus == "Rejected" || updatedStatus == "Suspended") {
+                updates["verified"] = false
+            }
+        }
+        
+        if (finalCredits != null) updates["credits"] = finalCredits
+        if (updatedUsername != null) updates["googleAccountName"] = updatedUsername
+        if (updatedPlayerUid != null) updates["playerUid"] = updatedPlayerUid
+        if (updatedPlayerName != null) updates["playerName"] = updatedPlayerName
+        if (updatedVerified != null && !isVerifying) updates["verified"] = updatedVerified
+        if (updatedRank != null) updates["userRank"] = updatedRank
+        if (updatedRole != null) updates["userRole"] = updatedRole
+
+        FirebaseFirestore.getInstance().collection("reclaim_profiles").document(userUid)
+            .update(updates)
+            .addOnSuccessListener {
+                showToast("Admin: User account updated!", "SUCCESS")
+                
+                viewModelScope.launch {
+                    val id = java.util.UUID.randomUUID().toString()
+                    val activityMap = hashMapOf<String, Any>(
+                        "id" to id,
+                        "user" to "Admin Dispatcher",
+                        "action" to "Status updated user ID ${updatedPlayerName ?: userUid} to '$updatedStatus'",
+                        "time" to "Just Now",
+                        "type" to "info"
+                    )
+                    FirebaseFirestore.getInstance().collection("live_activities").document(id)
+                        .set(activityMap)
+                }
+
+                val currentUser = FirebaseAuth.getInstance().currentUser
+                if (currentUser != null && currentUser.uid == userUid) {
+                    _uiState.update { state ->
+                        state.copy(
+                            userCredits = finalCredits ?: state.userCredits,
+                            googleAccountName = updatedUsername ?: state.googleAccountName,
+                            targetPlayerUid = updatedPlayerUid ?: state.targetPlayerUid,
+                            targetPlayerName = updatedPlayerName ?: state.targetPlayerName,
+                            accountStatus = updatedStatus ?: state.accountStatus,
+                            isVerified = if (isVerifying) true else (updatedVerified ?: state.isVerified),
+                            userRank = updatedRank ?: state.userRank,
+                            userRole = updatedRole ?: state.userRole
+                        )
+                    }
+                }
+            }
+            .addOnFailureListener {
+                FirebaseFirestore.getInstance().collection("reclaim_profiles").document(userUid)
+                    .set(updates, com.google.firebase.firestore.SetOptions.merge())
+                    .addOnSuccessListener {
+                        showToast("Admin: User created/merged successfully!", "SUCCESS")
+                        val currentUser = FirebaseAuth.getInstance().currentUser
+                        if (currentUser != null && currentUser.uid == userUid) {
+                            _uiState.update { state ->
+                                state.copy(
+                                    userCredits = finalCredits ?: state.userCredits,
+                                    googleAccountName = updatedUsername ?: state.googleAccountName,
+                                    targetPlayerUid = updatedPlayerUid ?: state.targetPlayerUid,
+                                    targetPlayerName = updatedPlayerName ?: state.targetPlayerName,
+                                    accountStatus = updatedStatus ?: state.accountStatus,
+                                    isVerified = if (isVerifying) true else (updatedVerified ?: state.isVerified),
+                                    userRank = updatedRank ?: state.userRank,
+                                    userRole = updatedRole ?: state.userRole
+                                )
+                            }
+                        }
+                    }
+                    .addOnFailureListener { e ->
+                        showToast("Admin: Failed to update user, ${e.message}", "ERROR")
+                    }
+            }
+        
+        // Parallel sync to RTDB
+        viewModelScope.launch {
+            try {
+                val currentProfile = repository.rtdbGetProfile(userUid)?.toMutableMap() ?: mutableMapOf()
+                if (finalCredits != null) currentProfile["userCredits"] = finalCredits
+                if (updatedUsername != null) currentProfile["googleAccountName"] = updatedUsername
+                if (updatedPlayerUid != null) currentProfile["playerUid"] = updatedPlayerUid
+                if (updatedPlayerName != null) currentProfile["playerName"] = updatedPlayerName
+                if (updatedStatus != null) currentProfile["status"] = updatedStatus
+                if (updatedVerified != null) currentProfile["verified"] = updatedVerified
+                if (updatedRank != null) currentProfile["userRank"] = updatedRank
+                if (updatedRole != null) currentProfile["userRole"] = updatedRole
+                repository.rtdbSaveProfile(userUid, currentProfile)
+            } catch (e: Exception) {
+                Log.e("ReclaimViewModel", "Admin RTDB sync error: ${e.message}")
+            }
+        }
+    }
+
+    fun adminSendFCMNotification(title: String, message: String, targetAudience: String) {
+        if (!_uiState.value.isAdminMode) return
+        val data = hashMapOf<String, Any>(
+            "title" to title,
+            "message" to message,
+            "targetAudience" to targetAudience,
+            "timestamp" to System.currentTimeMillis()
+        )
+        FirebaseFirestore.getInstance().collection("fcm_requests").add(data)
+    }
+
+    fun adminSendCustomPopup(title: String, message: String, targetAudience: String) {
+        if (!_uiState.value.isAdminMode) return
+        val data = hashMapOf<String, Any>(
+            "title" to title,
+            "message" to message,
+            "targetAudience" to targetAudience,
+            "timestamp" to System.currentTimeMillis()
+        )
+        FirebaseFirestore.getInstance().collection("admin_popups").document("global_live_popup").set(data)
+    }
+
+    fun adminCreatePromoCode(
+        code: String,
+        reward: Int,
+        expiryDate: String, // YYYY-MM-DD
+        usageLimit: Int,
+        isSingleUse: Boolean
+    ) {
+        if (!_uiState.value.isAdminMode) return
+        val upperCode = code.trim().uppercase()
+        if (upperCode.isBlank()) {
+            showToast("Promo Code cannot be empty!", "ERROR")
+            return
+        }
+        val data = hashMapOf<String, Any>(
+            "code" to upperCode,
+            "reward" to reward,
+            "expiryDate" to expiryDate,
+            "usageLimit" to usageLimit,
+            "timesRedeemed" to 0,
+            "singleUse" to isSingleUse,
+            "redeemedByUsers" to emptyList<String>()
+        )
+        FirebaseFirestore.getInstance().collection("promo_codes").document(upperCode)
+            .set(data)
+            .addOnSuccessListener {
+                showToast("Promo Code '$upperCode' registered in Firestore!", "SUCCESS")
+            }
+            .addOnFailureListener { e ->
+                showToast("Failed to register Promo Code: ${e.message}", "ERROR")
+            }
+    }
+
+    fun adminDeletePromoCode(code: String) {
+        if (!_uiState.value.isAdminMode) return
+        val upperCode = code.trim().uppercase()
+        FirebaseFirestore.getInstance().collection("promo_codes").document(upperCode)
+            .delete()
+            .addOnSuccessListener {
+                showToast("Promo Code '$upperCode' deleted!", "SUCCESS")
+            }
+            .addOnFailureListener { e ->
+                showToast("Failed to delete code: ${e.message}", "ERROR")
+            }
+    }
+
+    fun adminAddSupabaseSlider(imageUrl: String, linkUrl: String) {
+        if (!_uiState.value.isAdminMode) return
+        viewModelScope.launch {
+            try {
+                repository.addSupabaseSlider(imageUrl, linkUrl)
+                showToast("Admin: Slider Added Successfully", "SUCCESS")
+                triggerProgressRefresh() // Refresh sliders
+            } catch (e: Exception) {
+                showToast("Admin: Failed to add slider", "ERROR")
+            }
+        }
+    }
+
+    fun adminDeleteSupabaseSlider(imageUrl: String) {
+        if (!_uiState.value.isAdminMode) return
+        viewModelScope.launch {
+            try {
+                repository.deleteSupabaseSlider(imageUrl)
+                showToast("Admin: Slider Deleted Successfully", "SUCCESS")
+                triggerProgressRefresh() // Refresh sliders
+            } catch (e: Exception) {
+                showToast("Admin: Failed to delete slider", "ERROR")
+            }
+        }
+    }
+
+    private var reportsListener: com.google.firebase.firestore.ListenerRegistration? = null
+
+    fun startListeningToReports() {
+        reportsListener?.remove()
+        reportsListener = FirebaseFirestore.getInstance().collection("reclaim_reports")
+            .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    return@addSnapshotListener
+                }
+                if (snapshot != null) {
+                    val reports = snapshot.documents.mapNotNull { doc ->
+                        val obj = doc.data ?: return@mapNotNull null
+                        CommunityReport(
+                            reportId = doc.id,
+                            uid = obj["uid"]?.toString() ?: "",
+                            banReason = obj["banReason"]?.toString() ?: "",
+                            status = obj["status"]?.toString() ?: "Pending Review",
+                            submittedBy = obj["submittedBy"]?.toString() ?: "",
+                            timestamp = (obj["timestamp"] as? Long) ?: 0L,
+                            isPremiumVerified = obj["isPremiumVerified"] as? Boolean ?: false
+                        )
+                    }
+                    _uiState.update { it.copy(communityReports = reports) }
+                }
+            }
+    }
+
+    fun submitBanReport(uid: String, reason: String, status: String = "Pending Review") {
+        val id = java.util.UUID.randomUUID().toString()
+        val author = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "google_${(_uiState.value.googleAccountEmail ?: "guest").hashCode()}"
+        val reportMap = hashMapOf(
+            "reportId" to id,
+            "uid" to uid,
+            "banReason" to reason,
+            "status" to status,
+            "submittedBy" to author,
+            "timestamp" to System.currentTimeMillis()
+        )
+        FirebaseFirestore.getInstance().collection("reclaim_reports").document(id).set(reportMap)
+            .addOnSuccessListener {
+                showToast("Report submitted ($status) successfully.", "SUCCESS")
+            }
+            .addOnFailureListener {
+                showToast("Failed to submit report", "ERROR")
+            }
+    }
+
+    fun searchBanStatus(uid: String) {
+        val report = _uiState.value.communityReports.find { it.uid == uid && (it.status == "Verified" || it.status == "Premium Verified") }
+        if (report != null) {
+            _uiState.update {
+                it.copy(
+                    searchedBanStatus = "BANNED (${report.status})",
+                    searchedBanReason = report.banReason,
+                    searchedAppealAvailable = true
+                )
+            }
+        } else {
+            FirebaseFirestore.getInstance().collection("reclaim_reports")
+                .whereEqualTo("uid", uid)
+                .get()
+                .addOnSuccessListener {
+                    val firestoreReport = it.documents.find { doc -> 
+                        doc.getString("status") == "Verified" || doc.getString("status") == "Premium Verified"
+                    }
+                    if (firestoreReport != null) {
+                        _uiState.update { state -> state.copy(
+                            searchedBanStatus = "BANNED (${firestoreReport.getString("status")})",
+                            searchedBanReason = firestoreReport.getString("banReason") ?: "N/A",
+                            searchedAppealAvailable = true
+                        )}
+                    } else {
+                        _uiState.update { state -> state.copy(
+                            searchedBanStatus = "NO VERIFIED BAN FOUND",
+                            searchedBanReason = "N/A",
+                            searchedAppealAvailable = false
+                        )}
+                    }
+                }
+        }
+    }
+
+    fun adminVerifyReport(reportId: String, accept: Boolean, isPremium: Boolean = false) {
+        if (!_uiState.value.isAdminMode) return
+        val newStatus = if (accept) (if (isPremium) "Premium Verified" else "Verified") else "Rejected"
+        
+        FirebaseFirestore.getInstance().collection("reclaim_reports").document(reportId)
+            .update("status", newStatus, "isPremiumVerified", isPremium)
+            .addOnSuccessListener {
+                if (accept) {
+                    val reward = if (isPremium) 20 else 10
+                    _uiState.update { it.copy(userCredits = it.userCredits + reward) }
+                    showToast("Report verified. Awarded $reward credits to author.", "SUCCESS")
+                } else {
+                    showToast("Report rejected as Fake. No credits awarded.", "ERROR")
+                }
+            }
+    }
+
+    fun submitFeedback(type: String, email: String, text: String, rating: Int) {
+        val fb = hashMapOf(
+            "type" to type,
+            "email" to email,
+            "text" to text,
+            "rating" to rating,
+            "timestamp" to System.currentTimeMillis()
+        )
+        FirebaseFirestore.getInstance().collection("user_feedback").add(fb)
     }
 
     override fun onCleared() {
@@ -2344,4 +3167,27 @@ private val defaultNotificationLogs = listOf(
 private val defaultRecoveryHistory = listOf(
     RecoveryHistoryLogItem("REC-5082", "Oshaq Playz", "5482910772", "2026-06-11 14:22", "COMPLETED", "Direct Email Layer Recovery"),
     RecoveryHistoryLogItem("REC-4903", "YouTube", "3904817290", "2026-06-12 09:15", "FAILED", "In-game Token Authentication")
+)
+
+data class AdminUserItem(
+    val uid: String = "",
+    val playerName: String = "",
+    val playerUid: String = "",
+    val userCredits: Int = 50,
+    val status: String = "Pending Verification",
+    val verified: Boolean = false,
+    val userRank: String = "Silver Recruit",
+    val userRole: String = "User",
+    val googleAccountName: String? = null,
+    val googleAccountEmail: String? = null
+)
+
+data class PromoCode(
+    val code: String = "",
+    val reward: Int = 0,
+    val expiryDate: String = "", // "YYYY-MM-DD" e.g., "2026-12-31"
+    val usageLimit: Int = 100,
+    val timesRedeemed: Int = 0,
+    val isSingleUse: Boolean = false,
+    val redeemedByUsers: List<String> = emptyList()
 )

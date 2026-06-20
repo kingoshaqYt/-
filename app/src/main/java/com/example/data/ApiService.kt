@@ -8,10 +8,26 @@ import retrofit2.http.Url
 interface SupabaseApi {
     @GET("slider")
     suspend fun getSliders(
-        @Header("apikey") apiKey: String,
-        @Header("Authorization") bearerToken: String,
-        @Query("select") select: String = "*"
+        @retrofit2.http.Header("apikey") apiKey: String,
+        @retrofit2.http.Header("Authorization") bearerToken: String,
+        @retrofit2.http.Query("order") order: String = "id.desc",
+        @retrofit2.http.Query("select") select: String = "*"
     ): List<SupabaseSlider>
+
+    @retrofit2.http.DELETE("slider")
+    suspend fun deleteSlider(
+        @retrofit2.http.Header("apikey") apiKey: String,
+        @retrofit2.http.Header("Authorization") bearerToken: String,
+        @retrofit2.http.Query("image") imageEq: String
+    )
+
+    @retrofit2.http.POST("slider")
+    suspend fun insertSlider(
+        @retrofit2.http.Header("apikey") apiKey: String,
+        @retrofit2.http.Header("Authorization") bearerToken: String,
+        @retrofit2.http.Header("Prefer") prefer: String = "return=representation",
+        @retrofit2.http.Body slider: Map<String, String>
+    )
 }
 
 interface FirebaseApi {
