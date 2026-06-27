@@ -89,6 +89,7 @@ dependencies {
   implementation(platform(libs.firebase.bom))
   implementation(libs.firebase.auth)
   implementation(libs.firebase.firestore)
+  implementation("com.google.firebase:firebase-messaging")
   implementation(libs.play.services.auth)
   implementation("com.google.android.gms:play-services-ads:23.0.0")
   implementation(libs.androidx.credentials)

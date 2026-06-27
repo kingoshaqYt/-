@@ -86,6 +86,19 @@ class AppRepository {
         }
     }
 
+    suspend fun addSupabaseFeedback(feedback: Map<String, Any?>) {
+        try {
+            supabaseApi.insertFeedback(
+                apiKey = supabaseKey,
+                bearerToken = "Bearer $supabaseKey",
+                feedback = feedback
+            )
+        } catch (e: Exception) {
+            Log.e("AppRepository", "Error adding feedback to Supabase: ${e.message}", e)
+            throw e
+        }
+    }
+
     suspend fun fetchFirebaseLiveActivity(): List<LiveActivityItem> {
         return try {
             val list = firebaseApi.getLiveActivity()

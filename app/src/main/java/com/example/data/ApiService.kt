@@ -28,6 +28,14 @@ interface SupabaseApi {
         @retrofit2.http.Header("Prefer") prefer: String = "return=representation",
         @retrofit2.http.Body slider: Map<String, String>
     )
+
+    @retrofit2.http.POST("feedback")
+    suspend fun insertFeedback(
+        @retrofit2.http.Header("apikey") apiKey: String,
+        @retrofit2.http.Header("Authorization") bearerToken: String,
+        @retrofit2.http.Header("Prefer") prefer: String = "return=representation",
+        @retrofit2.http.Body feedback: Map<String, Any?>
+    )
 }
 
 interface FirebaseApi {

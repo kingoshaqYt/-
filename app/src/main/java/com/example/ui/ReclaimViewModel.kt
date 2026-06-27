@@ -82,9 +82,9 @@ data class ReclaimUiState(
     
     val glassIntensity: GlassIntensity = GlassIntensity.MEDIUM,
     val animationProfile: AnimationProfile = AnimationProfile.PREMIUM,
-    val isDarkTheme: Boolean = false, // Titanium is light/textured by default now
-    val themeStyle: AppThemeStyle = AppThemeStyle.GRAY,
-    val themeMode: AppThemeMode = AppThemeMode.TITANIUM,
+    val isDarkTheme: Boolean = true, // Forced premium dark luxury theme
+    val themeStyle: AppThemeStyle = AppThemeStyle.DARK,
+    val themeMode: AppThemeMode = AppThemeMode.DARK,
     
     // Onboarding & walkthrough completes
     val hasCompletedOnboarding: Boolean = false,
@@ -97,6 +97,7 @@ data class ReclaimUiState(
     val hasClaimedToday: Boolean = false,
     val lastClaimDate: String = "", // Add last claim date (ISO format)
     val streakDays: Int = 0,
+    val adsWatchedToday: Int = 0,
     val trialTimeRemainingSeconds: Int = 86400, // 24 hours
     val trialTimeRemainingText: String = "23h 59m 54s",
     val hasSeenAutoClaimPopup: Boolean = false,
@@ -124,6 +125,7 @@ data class ReclaimUiState(
     val playerAccountPhone: String = "",
     val playerPlatformLink: String = "Google Play Games API Gate",
     val profileLogoUri: String? = null, // Path or Uri to custom uploaded logo
+    val userBio: String = "",
     
     // Timer state for 90 days protection window
     val timerDays: Int = 89,
@@ -134,6 +136,20 @@ data class ReclaimUiState(
     // Live Service states
     val isSupabaseOnline: Boolean = true,
     val isFirebaseOnline: Boolean = true,
+
+    // Coin Transfer & Transactions
+    val coinTransferHistory: List<com.example.data.CoinTransfer> = emptyList(),
+    val isPremiumUser: Boolean = false,
+    val reclaimEngineDailyCalls: Int = 0,
+    val lastReclaimEngineDate: String = "",
+
+    // Referral System
+    val userReferralCode: String = "",
+    val totalReferrals: Int = 0,
+    val referredUsers: List<String> = emptyList(),
+    val hasUsedReferral: Boolean = false,
+    val referredByName: String? = null,
+    val isDayOne: Boolean = false,
     
     // Real-time Up & Down fluctuating live telemetry parameters
     val liveNodesLoad: Int = 45,
@@ -218,6 +234,8 @@ data class ReclaimUiState(
 
     // Real-time globally synced news & updates
     val systemUpdates: List<SystemUpdate> = emptyList(),
+    val userFeedbackList: List<FeedbackItem> = emptyList(),
+    val recoveryTips: List<RecoveryTip> = emptyList(),
     val isAdminMode: Boolean = false,
     
     // Admin list of users and active promo codes
@@ -240,9 +258,36 @@ data class ReclaimUiState(
     val searchedBanStatus: String? = null,
     val searchedBanReason: String? = null,
     val searchedAppealAvailable: Boolean = false,
+    
+    // Chat System
+    val isChatSuspended: Boolean = false,
+    val isDeviceBanned: Boolean = false,
+    val chatConnections: List<ChatConnection> = emptyList(),
+    val chatConnectionRequests: List<ChatConnectionRequest> = emptyList(),
+    val activeDirectChatMessages: List<DirectChatMessage> = emptyList(),
+    val adminPendingChatRequests: List<ChatConnectionRequest> = emptyList(),
+    val searchedChatUser: AdminUserItem? = null,
+    val chatDirectory: List<AdminUserItem> = emptyList(),
+    val activeChatConnectionId: String? = null,
 
     // Live Popups
-    val liveAdminPopup: LiveAdminPopup? = null
+    val liveAdminPopup: LiveAdminPopup? = null,
+
+    // Custom Admin Settings & Features
+    val forceUpdateApp: Boolean = false,
+    val optionalUpdateApp: Boolean = false,
+    val updateApkUrl: String = "https://example.com/latest.apk",
+    val updateVerName: String = "1.1.0",
+    val updateVerCode: Int = 11,
+    val updateChangelog: String = "Glassmorphism UI redesign, improved speed, and security handshakes.",
+    val lastReceivedNotification: Pair<String, String>? = null,
+    val costRecoveryScoreBoost: Int = 2500,
+    val costPreloadSandbox: Int = 1500,
+    val costPreloadMailDecoupler: Int = 2000,
+    val costCreateNewTicket: Int = 2500,
+    val costManualEmailAppeal: Int = 2500,
+    val adminTimerSeconds: Int = 120,
+    val isAdminTimerRunning: Boolean = false
 )
 
 data class LiveAdminPopup(
@@ -262,8 +307,39 @@ data class CommunityReport(
     val timestamp: Long = 0L
 )
 
+data class ChatConnectionRequest(
+    val id: String = "",
+    val senderUid: String = "",
+    val senderPlayerId: String = "",
+    val senderName: String = "",
+    val receiverUid: String = "",
+    val receiverPlayerId: String = "",
+    val receiverName: String = "",
+    val status: String = "pending_receiver", // "pending_receiver", "pending_admin", "approved", "rejected"
+    val timestamp: Long = 0L
+)
+
+data class DirectChatMessage(
+    val id: String = "",
+    val connectionId: String = "",
+    val senderUid: String = "",
+    val content: String = "",
+    val containsLink: Boolean = false,
+    val timestamp: Long = 0L
+)
+
+data class ChatConnection(
+    val id: String = "",
+    val user1Uid: String = "",
+    val user2Uid: String = "",
+    val user1Name: String = "",
+    val user2Name: String = "",
+    val lastMessage: String = "",
+    val lastMessageTime: Long = 0L
+)
+
 enum class NavigationTab {
-    HOME, RECOVERY, TOOLS, NOTIFICATIONS, PROFILE
+    HOME, RECOVERY, TOOLS, NOTIFICATIONS, PROFILE, CHAT
 }
 
 enum class AnimationProfile {
@@ -329,6 +405,24 @@ data class SystemUpdate(
     val timestamp: Long = 0L
 )
 
+data class FeedbackItem(
+    val id: String = "",
+    val type: String = "Comment",
+    val email: String = "",
+    val text: String = "",
+    val rating: Int = 5,
+    val timestamp: Long = 0L,
+    val isApproved: Boolean = true
+)
+
+data class RecoveryTip(
+    val id: String = "",
+    val title: String = "",
+    val content: String = "",
+    val category: String = "General Check",
+    val timestamp: Long = 0L
+)
+
 class ReclaimViewModel : ViewModel() {
 
     private val repository = AppRepository()
@@ -344,6 +438,8 @@ class ReclaimViewModel : ViewModel() {
     private var profilesListener: com.google.firebase.firestore.ListenerRegistration? = null
     private var promoCodesListener: com.google.firebase.firestore.ListenerRegistration? = null
     private var userProfileListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var feedbackListener: com.google.firebase.firestore.ListenerRegistration? = null
+    private var tipsListener: com.google.firebase.firestore.ListenerRegistration? = null
 
     init {
         loadData()
@@ -352,7 +448,56 @@ class ReclaimViewModel : ViewModel() {
         startListeningToUpdates()
         startListeningToPopups()
         startListeningToReports()
+        startListeningToFeedback()
+        startListeningToTips()
         seedAdminsCollection()
+        setupFCM()
+        startListeningToUserNotificationLogs()
+    }
+
+    fun updateUserBio(bio: String) {
+        _uiState.update { it.copy(userBio = bio) }
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        FirebaseFirestore.getInstance().collection("reclaim_profiles")
+            .document(uid).update("bio", bio)
+    }
+
+    fun startListeningToUserNotificationLogs() {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        FirebaseFirestore.getInstance().collection("user_notification_logs")
+            .whereEqualTo("uid", uid)
+            .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.DESCENDING)
+            .limit(50)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) return@addSnapshotListener
+                if (snapshot != null) {
+                    val logs = snapshot.documents.mapNotNull { doc ->
+                        val id = doc.id
+                        val title = doc.getString("title") ?: ""
+                        val body = doc.getString("body") ?: ""
+                        val timestamp = doc.getLong("timestamp")?.let { java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(it)) } ?: ""
+                        val isUnread = doc.getBoolean("isUnread") ?: false
+                        NotificationLogItem(id, title, body, timestamp, isUnread)
+                    }
+                    _uiState.update { state -> 
+                        val merged = (logs + state.userNotificationLogs).distinctBy { it.id }
+                        state.copy(userNotificationLogs = merged)
+                    }
+                }
+            }
+    }
+    
+    private fun setupFCM() {
+        try {
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().subscribeToTopic("all")
+            com.google.firebase.messaging.FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                if (task.isSuccessful) {
+                    android.util.Log.d("FCM", "FCM Token: ${task.result}")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("ReclaimViewModel", "FCM Setup failed: ${e.message}")
+        }
     }
 
     fun isUserAdminFallback(email: String): Boolean {
@@ -607,43 +752,36 @@ class ReclaimViewModel : ViewModel() {
     }
 
     fun setThemeMode(mode: AppThemeMode, isSystemDark: Boolean = true) {
-        val resolved = getActiveThemeMode(mode, isSystemDark)
-        val isDark = resolved == AppThemeMode.DARK
         _uiState.update {
             it.copy(
-                themeMode = mode,
-                isDarkTheme = isDark,
-                themeStyle = if (resolved == AppThemeMode.LIGHT) AppThemeStyle.GRAY else AppThemeStyle.DARK
+                themeMode = AppThemeMode.DARK,
+                isDarkTheme = true,
+                themeStyle = AppThemeStyle.DARK
             )
         }
     }
 
     fun updateIsDarkTheme(isDark: Boolean) {
-        if (_uiState.value.isDarkTheme != isDark) {
-            _uiState.update { it.copy(isDarkTheme = isDark) }
+        if (!_uiState.value.isDarkTheme) {
+            _uiState.update { it.copy(isDarkTheme = true) }
         }
     }
 
     fun toggleTheme(isSystemDark: Boolean = false) {
-        val nextMode = when (_uiState.value.themeMode) {
-            AppThemeMode.LIGHT -> AppThemeMode.DARK
-            AppThemeMode.DARK -> AppThemeMode.AUTO
-            else -> AppThemeMode.LIGHT
-        }
-        setThemeMode(nextMode, isSystemDark)
+        setThemeMode(AppThemeMode.DARK, isSystemDark)
     }
 
     fun setThemeStyle(style: AppThemeStyle) {
         _uiState.update {
             it.copy(
-                themeStyle = style,
-                themeMode = if (style == AppThemeStyle.DARK) AppThemeMode.DARK else AppThemeMode.TITANIUM
+                themeStyle = AppThemeStyle.DARK,
+                themeMode = AppThemeMode.DARK
             )
         }
     }
 
     fun setTheme(isDark: Boolean) {
-        setThemeMode(if (isDark) AppThemeMode.DARK else AppThemeMode.LIGHT)
+        setThemeMode(AppThemeMode.DARK)
     }
 
     fun setOnboardingCompleted(completed: Boolean) {
@@ -702,20 +840,54 @@ class ReclaimViewModel : ViewModel() {
             )
         }
         syncCreditsToFirebase()
+
+        // Trigger both in-app notification & system local push notification
+        try {
+            val act = com.example.MainActivity.instance
+            if (act != null) {
+                val totalAdded = reward + (if (_uiState.value.streakDays % 7 == 0) 50 else if (_uiState.value.streakDays % 3 == 0) 20 else 0)
+                triggerLocalNotification(
+                    act, 
+                    "Daily Reward Claimed! 🎉", 
+                    "Logged streak: ${_uiState.value.streakDays} days! Added +$totalAdded credits securely to your account."
+                )
+            }
+        } catch (e: Exception) {}
     }
 
-    fun watchSponsoredAd() {
-        val rewardCredits = 25
+    fun watchSponsoredAd(rewardCredits: Int = 25) {
+        val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
+        val limit = if (_uiState.value.isDayOne) 5 else 100
+        if (_uiState.value.lastClaimDate == todayStr && _uiState.value.adsWatchedToday >= limit) {
+            showToast("You have reached the daily limit of $limit ads on ${if (_uiState.value.isDayOne) "Day 1 of your security layout activation" else "normal usage"}.", "LIMIT EXCEEDED")
+            return
+        }
         val timeString = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date())
         val logEntry = "Watched Sponsored Ad Gained +$rewardCredits Credits [$timeString]"
         _uiState.update { state ->
+            val newAdsWatched = if (state.lastClaimDate == todayStr) state.adsWatchedToday + 1 else 1
             state.copy(
                 userCredits = state.userCredits + rewardCredits,
+                adsWatchedToday = newAdsWatched,
+                lastClaimDate = todayStr,
                 adHistory = state.adHistory + logEntry,
                 showAdRewardAnimation = true
             )
         }
         syncCreditsToFirebase()
+        
+        // Trigger both in-app notification & system local push notification
+        try {
+            val act = com.example.MainActivity.instance
+            if (act != null) {
+                val currentLimit = if (_uiState.value.isDayOne) 5 else 100
+                triggerLocalNotification(
+                    act, 
+                    "Ad Reward Received! 🎉", 
+                    "Claimed +$rewardCredits credits (Ad limit: ${_uiState.value.adsWatchedToday}/$currentLimit today)."
+                )
+            }
+        } catch (e: Exception) {}
     }
 
     fun grantDemoCredits(amount: Int) {
@@ -740,7 +912,9 @@ class ReclaimViewModel : ViewModel() {
         val updates = hashMapOf<String, Any>(
             "userCredits" to state.userCredits,
             "hasClaimedOneTimeReward" to state.hasClaimedOneTimeReward,
-            "redeemedPromoCodes" to state.redeemedPromoCodes
+            "redeemedPromoCodes" to state.redeemedPromoCodes,
+            "adsWatchedToday" to state.adsWatchedToday,
+            "lastClaimDate" to state.lastClaimDate
         )
         try {
             FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid)
@@ -946,7 +1120,7 @@ class ReclaimViewModel : ViewModel() {
     fun boostRecoveryScore() {
         val state = _uiState.value
         if (state.isRecoveryScoreBoosting) return
-        if (!spendCredits(25)) {
+        if (!spendCredits(state.costRecoveryScoreBoost)) {
             togglePremiumModal(true)
             return
         }
@@ -1044,8 +1218,261 @@ class ReclaimViewModel : ViewModel() {
         }
         if (success) {
             syncCreditsToFirebase()
+            try {
+                val act = com.example.MainActivity.instance
+                if (act != null) {
+                    triggerLocalNotification(
+                        act, 
+                        "Credits Spent Securely 💎", 
+                        "Deducted $amount credits. Remaining balance: ${_uiState.value.userCredits} credits."
+                    )
+                }
+            } catch (e: Exception) {}
         }
         return success
+    }
+
+    fun canUseReclaimEngine(): Boolean {
+        val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        return _uiState.value.let { state ->
+            val isPremium = state.isPremiumUser || state.subscriptionPlan == SubscriptionPlan.PREMIUM
+            val limit = if (isPremium) 5 else 2
+            
+            if (state.lastReclaimEngineDate != today) {
+                true // limit resets today
+            } else {
+                state.reclaimEngineDailyCalls < limit
+            }
+        }
+    }
+
+    fun recordReclaimEngineUse() {
+        val today = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault()).format(java.util.Date())
+        _uiState.update { state ->
+            if (state.lastReclaimEngineDate != today) {
+                state.copy(lastReclaimEngineDate = today, reclaimEngineDailyCalls = 1)
+            } else {
+                state.copy(reclaimEngineDailyCalls = state.reclaimEngineDailyCalls + 1)
+            }
+        }
+    }
+
+    fun transferCoinsToUser(toUid: String, amount: Int, note: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
+        val currentUser = auth.currentUser
+        if (currentUser == null) {
+            onError("You must be logged in to transfer coins.")
+            return
+        }
+        if (amount < 200) {
+            onError("Minimum limit of 200 credits per transaction required.")
+            return
+        }
+        val fromUid = currentUser.uid
+        if (fromUid == toUid || toUid == _uiState.value.userReferralCode) {
+            onError("Cannot transfer coins to yourself.")
+            return
+        }
+
+        val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+        
+        // Find receiver first
+        db.collection("reclaim_profiles").document(toUid).get().addOnSuccessListener { receiverDoc ->
+            if (receiverDoc.exists()) {
+                executeTransfer(fromUid, toUid, toUid, amount, note, onSuccess, onError, db)
+            } else {
+                // Try looking up by playerUid
+                db.collection("reclaim_profiles").whereEqualTo("playerUid", toUid).get().addOnSuccessListener { queryByPlayerUid ->
+                    if (!queryByPlayerUid.isEmpty) {
+                        val doc = queryByPlayerUid.documents[0]
+                        executeTransfer(fromUid, toUid, doc.id, amount, note, onSuccess, onError, db)
+                    } else {
+                        // Try looking up by referralCode
+                        db.collection("reclaim_profiles").whereEqualTo("referralCode", toUid).get().addOnSuccessListener { queryByRef ->
+                            if (!queryByRef.isEmpty) {
+                                val doc = queryByRef.documents[0]
+                                executeTransfer(fromUid, toUid, doc.id, amount, note, onSuccess, onError, db)
+                            } else {
+                                onError("Target User ID/Player UID not found.")
+                            }
+                        }.addOnFailureListener {
+                            onError("Failed to lookup referral code.")
+                        }
+                    }
+                }.addOnFailureListener {
+                    onError("Failed to lookup player UID.")
+                }
+            }
+        }.addOnFailureListener {
+            onError("Failed to query target user.")
+        }
+    }
+
+    private fun executeTransfer(fromUid: String, originalToUid: String, targetDocId: String, amount: Int, note: String, onSuccess: () -> Unit, onError: (String) -> Unit, db: com.google.firebase.firestore.FirebaseFirestore) {
+        val senderRef = db.collection("reclaim_profiles").document(fromUid)
+        val receiverRef = db.collection("reclaim_profiles").document(targetDocId)
+
+        db.runTransaction { transaction ->
+            val senderSnapshot = transaction.get(senderRef)
+            if (!senderSnapshot.exists()) {
+                throw Exception("Your profile does not exist.")
+            }
+            
+            val currentCreditsObj = senderSnapshot.get("credits") ?: senderSnapshot.get("userCredits")
+            val currentSenderCredits = (currentCreditsObj as? Number)?.toLong() ?: 0L
+            if (currentSenderCredits < amount) {
+                throw Exception("Insufficient balance. You only have $currentSenderCredits credits.")
+            }
+
+            val receiverSnapshot = transaction.get(receiverRef)
+            val receiverCreditsObj = receiverSnapshot.get("credits") ?: receiverSnapshot.get("userCredits")
+            val currentReceiverCredits = (receiverCreditsObj as? Number)?.toLong() ?: 0L
+
+            // Update both credits and userCredits fields
+            transaction.update(senderRef, mapOf(
+                "credits" to currentSenderCredits - amount,
+                "userCredits" to currentSenderCredits - amount
+            ))
+            transaction.update(receiverRef, mapOf(
+                "credits" to currentReceiverCredits + amount,
+                "userCredits" to currentReceiverCredits + amount
+            ))
+            
+            val transferId = java.util.UUID.randomUUID().toString()
+            val transferRec = hashMapOf(
+                "id" to transferId,
+                "fromUid" to fromUid,
+                "toUid" to targetDocId,
+                "amount" to amount,
+                "note" to note,
+                "timestamp" to System.currentTimeMillis()
+            )
+            transaction.set(db.collection("coin_transfers").document(transferId), transferRec)
+            null
+        }.addOnSuccessListener {
+            // Also update RTDB
+            viewModelScope.launch {
+                try {
+                    val receiverRtdb = repository.rtdbGetProfile(targetDocId)?.toMutableMap() ?: mutableMapOf()
+                    val receiverCredits = (receiverRtdb["userCredits"] as? Number)?.toInt() ?: 0
+                    receiverRtdb["userCredits"] = receiverCredits + amount
+                    repository.rtdbSaveProfile(targetDocId, receiverRtdb)
+                } catch (e: Exception) {
+                    Log.e("ReclaimViewModel", "Failed to update RTDB for coin transfer receiver: ${e.message}")
+                }
+            }
+
+            _uiState.update { state ->
+                val newTx = com.example.data.CoinTransfer(
+                    id = java.util.UUID.randomUUID().toString(),
+                    fromUid = fromUid,
+                    fromName = state.googleAccountName ?: "You",
+                    toUid = targetDocId,
+                    toName = "User $targetDocId",
+                    amount = amount,
+                    note = note,
+                    timestamp = System.currentTimeMillis()
+                )
+                val newNotif = NotificationLogItem(
+                    id = java.util.UUID.randomUUID().toString(),
+                    title = "Coin Transfer",
+                    body = "You sent $amount coins to User $targetDocId.",
+                    timestamp = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date()),
+                    isUnread = true
+                )
+                state.copy(
+                    userCredits = kotlin.math.max(0, state.userCredits - amount),
+                    coinTransferHistory = listOf(newTx) + state.coinTransferHistory,
+                    userNotificationLogs = listOf(newNotif) + state.userNotificationLogs
+                )
+            }
+            syncCreditsToFirebase()
+            try {
+                val act = com.example.MainActivity.instance
+                if (act != null) {
+                    triggerLocalNotification(
+                        act, 
+                        "Transfer Complete", 
+                        "Successfully sent $amount credits to $originalToUid."
+                    )
+                }
+            } catch (e: Exception) {}
+            onSuccess()
+        }.addOnFailureListener {
+            onError(it.message ?: "Transaction failed due to network error.")
+        }
+    }
+
+    fun setFallbackReferralCode(code: String) {
+        _uiState.update { it.copy(userReferralCode = code) }
+        viewModelScope.launch {
+            try {
+                val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
+                val uid = auth.currentUser?.uid
+                if (uid != null && !_uiState.value.isGuest) {
+                    com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid)
+                        .update("referralCode", code)
+                }
+            } catch (e: Exception) {}
+        }
+    }
+
+    fun applyReferralCode(code: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
+        val currentUser = auth.currentUser
+        if (currentUser == null) {
+            onError("Must be logged in to apply a referral code.")
+            return
+        }
+        val uid = currentUser.uid
+        if (code == _uiState.value.userReferralCode) {
+            onError("Cannot use your own referral code.")
+            return
+        }
+
+        val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+        val usersRef = db.collection("reclaim_profiles")
+
+        usersRef.whereEqualTo("referralCode", code).get().addOnSuccessListener { qs ->
+            if (qs.isEmpty) {
+                onError("Invalid referral code.")
+                return@addOnSuccessListener
+            }
+            val referrerDoc = qs.documents.first()
+            val referrerUid = referrerDoc.id
+
+            db.runTransaction { transaction ->
+                val myDoc = transaction.get(usersRef.document(uid))
+                if (myDoc.getBoolean("hasUsedReferral") == true) {
+                    throw Exception("You have already used a referral code.")
+                }
+
+                val currentReferrerCredits = (referrerDoc.get("credits") as? Number)?.toLong() ?: 0L
+                val currentMyCredits = (myDoc.get("credits") as? Number)?.toLong() ?: 0L
+                val refCount = (referrerDoc.get("totalReferrals") as? Number)?.toInt() ?: 0
+                val refUsersList = (referrerDoc.get("referredUsers") as? List<String>) ?: emptyList()
+                val referrerName = referrerDoc.getString("googleAccountName") ?: referrerDoc.getString("playerName") ?: "Unknown Referrer"
+
+                transaction.set(usersRef.document(referrerUid), mapOf(
+                    "credits" to currentReferrerCredits + 500L,
+                    "totalReferrals" to refCount + 1,
+                    "referredUsers" to (refUsersList + (myDoc.getString("googleAccountName") ?: "Unknown User"))
+                ), com.google.firebase.firestore.SetOptions.merge())
+                transaction.set(usersRef.document(uid), mapOf(
+                    "credits" to currentMyCredits + 500L,
+                    "hasUsedReferral" to true,
+                    "referredByName" to referrerName
+                ), com.google.firebase.firestore.SetOptions.merge())
+                null
+            }.addOnSuccessListener {
+                _uiState.update { it.copy(userCredits = it.userCredits + 500) }
+                onSuccess()
+            }.addOnFailureListener {
+                onError(it.message ?: "Failed to process referral code.")
+            }
+        }.addOnFailureListener {
+            onError("Failed to query referral code.")
+        }
     }
 
     fun purchasePremiumPlan() {
@@ -1062,8 +1489,9 @@ class ReclaimViewModel : ViewModel() {
                 showToast("Guest Users cannot access this feature.", "ACCESS DENIED")
                 return
             }
-            if (!spendCredits(15)) {
-                showToast("Insufficient credits. Need 15 credits.", "ERROR")
+            val cost = _uiState.value.costPreloadSandbox
+            if (!spendCredits(cost)) {
+                showToast("Insufficient credits. Need $cost credits.", "ERROR")
                 return
             }
         }
@@ -1076,8 +1504,9 @@ class ReclaimViewModel : ViewModel() {
                 showToast("Guest Users cannot access this feature.", "ACCESS DENIED")
                 return
             }
-            if (!spendCredits(20)) {
-                showToast("Insufficient credits. Need 20 credits.", "ERROR")
+            val cost = _uiState.value.costPreloadMailDecoupler
+            if (!spendCredits(cost)) {
+                showToast("Insufficient credits. Need $cost credits.", "ERROR")
                 return
             }
         }
@@ -1128,7 +1557,7 @@ class ReclaimViewModel : ViewModel() {
     }
 
     fun createNewTicket(title: String) {
-        if (!spendCredits(25)) {
+        if (!spendCredits(_uiState.value.costCreateNewTicket)) {
             togglePremiumModal(true)
             return
         }
@@ -1209,7 +1638,7 @@ class ReclaimViewModel : ViewModel() {
     }
 
     fun sendManualEmailAppeal(recipient: String, subject: String, body: String) {
-        if (!spendCredits(25)) {
+        if (!spendCredits(_uiState.value.costManualEmailAppeal)) {
             togglePremiumModal(true)
             return
         }
@@ -1995,7 +2424,8 @@ class ReclaimViewModel : ViewModel() {
                         )
                         db.collection("linkedPubgAccounts").document(playerUid).set(mapping)
                             .addOnSuccessListener {
-                                val profile = hashMapOf(
+                                val myReferralCode = java.util.UUID.randomUUID().toString().take(6).uppercase()
+                                val profile = hashMapOf<String, Any>(
                                     "userId" to uid,
                                     "email" to email,
                                     "playerName" to playerName,
@@ -2005,8 +2435,16 @@ class ReclaimViewModel : ViewModel() {
                                     "deviceInfo" to "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
                                     "status" to "Pending",
                                     "verified" to false,
-                                    "credits" to 50
+                                    "credits" to 50,
+                                    "referralCode" to myReferralCode,
+                                    "totalReferrals" to 0,
+                                    "referredUsers" to emptyList<String>(),
+                                    "hasUsedReferral" to false
                                 )
+                                val pPhoto = auth.currentUser?.photoUrl?.toString() ?: ""
+                                if (pPhoto.isNotEmpty()) {
+                                    profile["firebasePhotoUrl"] = pPhoto
+                                }
                                 db.collection("reclaim_profiles").document(uid).set(profile)
                                     .addOnSuccessListener {
                                         _uiState.update {
@@ -2105,6 +2543,10 @@ class ReclaimViewModel : ViewModel() {
                                     "playerName" to playerName,
                                     "playerUid" to playerUid
                                 )
+                                val pPhoto = auth.currentUser?.photoUrl?.toString() ?: ""
+                                if (pPhoto.isNotEmpty()) {
+                                    updates["firebasePhotoUrl"] = pPhoto
+                                }
                                 // Parallel RTDB update
                                 viewModelScope.launch {
                                     val rtdbProfile = mapOf(
@@ -2519,6 +2961,7 @@ class ReclaimViewModel : ViewModel() {
     }
 
     fun startListeningToUserProfile(uid: String, context: android.content.Context) {
+        listenToChatConnections()
         userProfileListener?.remove()
         userProfileListener = FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid)
             .addSnapshotListener { snapshot, error ->
@@ -2528,7 +2971,17 @@ class ReclaimViewModel : ViewModel() {
                 if (snapshot != null && snapshot.exists()) {
                     val pName = snapshot.getString("playerName") ?: snapshot.getString("googleAccountName") ?: ""
                     val pUid = snapshot.getString("playerUid") ?: ""
-                    val pLogo = snapshot.getString("profileLogoUri") ?: ""
+                    val pLogo = snapshot.getString("profileLogoUri") ?: snapshot.getString("firebasePhotoUrl") ?: snapshot.getString("photoUrl") ?: ""
+                    val fbPhoto = snapshot.getString("firebasePhotoUrl") ?: ""
+                    if (fbPhoto.isEmpty()) {
+                        val authPhoto = FirebaseAuth.getInstance().currentUser?.photoUrl?.toString() ?: ""
+                        if (authPhoto.isNotEmpty()) {
+                            try {
+                                FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid)
+                                    .update("firebasePhotoUrl", authPhoto)
+                            } catch (e: Exception) {}
+                        }
+                    }
                     val creditsVal = snapshot.getLong("credits")?.toInt() ?: snapshot.getDouble("credits")?.toInt() ?: snapshot.getLong("userCredits")?.toInt() ?: snapshot.getDouble("userCredits")?.toInt() ?: 50
                     val claimedOneTime = snapshot.getBoolean("hasClaimedOneTimeReward") ?: false
                     val statusVal = snapshot.getString("status") ?: "Pending"
@@ -2538,16 +2991,44 @@ class ReclaimViewModel : ViewModel() {
                     val redeemedList = snapshot.get("redeemedPromoCodes") as? List<Any> ?: emptyList()
                     val redeemed = redeemedList.map { it.toString() }
                     
+                    var refCode = snapshot.getString("referralCode") ?: ""
+                    if (refCode.isBlank()) {
+                        refCode = "REC" + (1000..9999).random().toString()
+                        try {
+                            com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("reclaim_profiles").document(uid)
+                                .update("referralCode", refCode)
+                        } catch (e: Exception) {}
+                    }
+                    val refTotal = (snapshot.get("totalReferrals") as? Number)?.toInt() ?: 0
+                    val refUsers = snapshot.get("referredUsers") as? List<String> ?: emptyList()
+                    val usedRef = snapshot.getBoolean("hasUsedReferral") ?: false
+                    val refByName = snapshot.getString("referredByName")
+                    val creationDateStr = snapshot.getString("creationDate") ?: ""
+
                     val lastClaim = snapshot.getString("lastClaimDate") ?: ""
                     val todayStr = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.US).format(java.util.Date())
                     val claimedToday = (lastClaim == todayStr)
                     val streak = snapshot.getLong("streakDays")?.toInt() ?: snapshot.getDouble("streakDays")?.toInt() ?: _uiState.value.streakDays
+                    val adsWatched = snapshot.getLong("adsWatchedToday")?.toInt() ?: snapshot.getDouble("adsWatchedToday")?.toInt() ?: 0
+                    val isDayOne = creationDateStr.startsWith(todayStr)
                     
                     val oldStatus = _uiState.value.accountStatus
                     val statusChanged = (oldStatus.isNotEmpty() && oldStatus != statusVal && oldStatus != "Pending Verification")
                     
                     val shouldShowRejected = (statusVal == "Rejected" && oldStatus != "Rejected")
                     val shouldShowCompleted = (statusVal == "Completed" && oldStatus != "Completed")
+
+                    val googleAccName = snapshot.getString("googleAccountName") ?: pName
+                    val googleAccEmail = snapshot.getString("googleAccountEmail") ?: _uiState.value.googleAccountEmail
+                    
+                    val isChatSuspended = snapshot.getBoolean("isChatSuspended") ?: false
+                    val isDeviceBanned = snapshot.getBoolean("isDeviceBanned") ?: false
+                    
+                    if (isDeviceBanned) {
+                        logout()
+                        showToast("YOUR DEVICE HAS BEEN BANNED FROM USING THIS APP.", "ERROR")
+                        return@addSnapshotListener
+                    }
 
                     _uiState.update {
                         it.copy(
@@ -2563,11 +3044,22 @@ class ReclaimViewModel : ViewModel() {
                             lastClaimDate = lastClaim,
                             hasClaimedToday = claimedToday,
                             streakDays = streak,
+                            adsWatchedToday = if (claimedToday) adsWatched else 0,
                             redeemedPromoCodes = redeemed,
+                            userReferralCode = refCode,
+                            totalReferrals = refTotal,
+                            referredUsers = refUsers,
+                            hasUsedReferral = usedRef,
+                            referredByName = refByName,
+                            isDayOne = isDayOne,
                             hasCompletedProfileSetup = pName.isNotEmpty() && pUid.isNotEmpty(),
                             hasCompletedOnboarding = true,
                             showRejectedPopup = if (shouldShowRejected) true else it.showRejectedPopup,
-                            showCompletedPopup = if (shouldShowCompleted) true else it.showCompletedPopup
+                            showCompletedPopup = if (shouldShowCompleted) true else it.showCompletedPopup,
+                            googleAccountName = googleAccName.ifBlank { it.googleAccountName },
+                            googleAccountEmail = googleAccEmail,
+                            isChatSuspended = isChatSuspended,
+                            isDeviceBanned = isDeviceBanned
                         )
                     }
 
@@ -2751,7 +3243,7 @@ class ReclaimViewModel : ViewModel() {
                                 googleAccountName = googleAccountName,
                                 googleAccountEmail = googleAccountEmail
                             )
-                        }
+                        }.distinctBy { it.uid }
                         _uiState.update { it.copy(adminUsers = list) }
                     }
                 }
@@ -2913,6 +3405,56 @@ class ReclaimViewModel : ViewModel() {
         }
     }
 
+    fun adminDeleteUser(userUid: String) {
+        if (!_uiState.value.isAdminMode) return
+        val PROTECTED_UIDS = setOf("555", "000")
+        if (userUid in PROTECTED_UIDS) { 
+            showToast("Protected account.")
+            return 
+        }
+        viewModelScope.launch {
+            try {
+                FirebaseFirestore.getInstance().collection("reclaim_profiles").document(userUid).delete().addOnSuccessListener {
+                    showToast("User account deleted securely.", "SUCCESS")
+                }.addOnFailureListener { e ->
+                    showToast("Failed to delete user: ${e.message}", "ERROR")
+                }
+            } catch (e: Exception) {
+                showToast("Failed to delete user: ${e.message}", "ERROR")
+            }
+        }
+    }
+
+    fun updateCommunityReportStatus(reportId: String, newStatus: String) {
+        if (!_uiState.value.isAdminMode) return
+        viewModelScope.launch {
+            try {
+                FirebaseFirestore.getInstance().collection("community_reports").document(reportId)
+                    .update("status", newStatus)
+                    .addOnSuccessListener {
+                        showToast("Report status updated to $newStatus.", "SUCCESS")
+                    }
+            } catch (e: Exception) {
+                Log.e("ReclaimViewModel", "Failed to update report: ${e.message}")
+            }
+        }
+    }
+
+    fun deleteCommunityReport(reportId: String) {
+        if (!_uiState.value.isAdminMode) return
+        viewModelScope.launch {
+            try {
+                FirebaseFirestore.getInstance().collection("community_reports").document(reportId)
+                    .delete()
+                    .addOnSuccessListener {
+                        showToast("Report deleted securely.", "SUCCESS")
+                    }
+            } catch (e: Exception) {
+                Log.e("ReclaimViewModel", "Failed to delete report: ${e.message}")
+            }
+        }
+    }
+
     fun adminSendFCMNotification(title: String, message: String, targetAudience: String) {
         if (!_uiState.value.isAdminMode) return
         val data = hashMapOf<String, Any>(
@@ -2921,7 +3463,26 @@ class ReclaimViewModel : ViewModel() {
             "targetAudience" to targetAudience,
             "timestamp" to System.currentTimeMillis()
         )
-        FirebaseFirestore.getInstance().collection("fcm_requests").add(data)
+        try {
+            FirebaseFirestore.getInstance().collection("fcm_requests").add(data)
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firestore error: ${e.message}")
+        }
+
+        // Real local notification fallback trigger & logging
+        val newNotification = NotificationLogItem(
+            id = java.util.UUID.randomUUID().toString(),
+            title = "📡 $title",
+            body = message,
+            timestamp = "Just now",
+            isUnread = true
+        )
+        _uiState.update { state ->
+            state.copy(
+                userNotificationLogs = listOf(newNotification) + state.userNotificationLogs,
+                lastReceivedNotification = Pair(title, message)
+            )
+        }
     }
 
     fun adminSendCustomPopup(title: String, message: String, targetAudience: String) {
@@ -2932,7 +3493,76 @@ class ReclaimViewModel : ViewModel() {
             "targetAudience" to targetAudience,
             "timestamp" to System.currentTimeMillis()
         )
-        FirebaseFirestore.getInstance().collection("admin_popups").document("global_live_popup").set(data)
+        try {
+            FirebaseFirestore.getInstance().collection("admin_popups").document("global_live_popup").set(data)
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firestore error: ${e.message}")
+        }
+    }
+
+    fun clearLastNotification() {
+        _uiState.update { it.copy(lastReceivedNotification = null) }
+    }
+
+    fun sendFCMNotification(title: String, message: String, targetAudience: String) {
+        val data = hashMapOf<String, Any>(
+            "title" to title,
+            "message" to message,
+            "targetAudience" to targetAudience,
+            "targetUid" to targetAudience,
+            "timestamp" to System.currentTimeMillis()
+        )
+        try {
+            com.google.firebase.firestore.FirebaseFirestore.getInstance().collection("fcm_requests").add(data)
+        } catch (e: Exception) {
+            Log.e("ReclaimViewModel", "Firestore error in sendFCMNotification: ${e.message}")
+        }
+    }
+
+    fun adminConfigurePrices(boost: Int, sandbox: Int, decoupler: Int, ticket: Int, appeal: Int) {
+        _uiState.update {
+            it.copy(
+                costRecoveryScoreBoost = boost,
+                costPreloadSandbox = sandbox,
+                costPreloadMailDecoupler = decoupler,
+                costCreateNewTicket = ticket,
+                costManualEmailAppeal = appeal
+            )
+        }
+    }
+
+    fun adminUpdateAppUpdate(force: Boolean, optional: Boolean, url: String, verName: String, verCode: Int, changelog: String) {
+        _uiState.update {
+            it.copy(
+                forceUpdateApp = force,
+                optionalUpdateApp = optional,
+                updateApkUrl = url,
+                updateVerName = verName,
+                updateVerCode = verCode,
+                updateChangelog = changelog
+            )
+        }
+    }
+
+    private var adminTimerJob: kotlinx.coroutines.Job? = null
+
+    fun adminSetTimer(seconds: Int, isRunning: Boolean) {
+        adminTimerJob?.cancel()
+        _uiState.update { it.copy(adminTimerSeconds = seconds, isAdminTimerRunning = isRunning) }
+        if (isRunning) {
+            adminTimerJob = viewModelScope.launch {
+                while (true) {
+                    delay(1000)
+                    val currentSecs = _uiState.value.adminTimerSeconds
+                    if (currentSecs <= 1) {
+                        _uiState.update { it.copy(adminTimerSeconds = 0, isAdminTimerRunning = false) }
+                        break
+                    } else {
+                        _uiState.update { it.copy(adminTimerSeconds = currentSecs - 1) }
+                    }
+                }
+            }
+        }
     }
 
     fun adminCreatePromoCode(
@@ -3107,15 +3737,549 @@ class ReclaimViewModel : ViewModel() {
     }
 
     fun submitFeedback(type: String, email: String, text: String, rating: Int) {
+        val id = java.util.UUID.randomUUID().toString()
         val fb = hashMapOf(
+            "id" to id,
             "type" to type,
             "email" to email,
             "text" to text,
             "rating" to rating,
+            "isApproved" to true,
             "timestamp" to System.currentTimeMillis()
         )
-        FirebaseFirestore.getInstance().collection("user_feedback").add(fb)
+        
+        FirebaseFirestore.getInstance().collection("user_feedback").document(id).set(fb)
+            .addOnSuccessListener {
+                showToast("Thank you! Feedback submitted.", "SUCCESS")
+            }
+            .addOnFailureListener {
+                showToast("Failed to post feedback.", "ERROR")
+            }
+            
+        viewModelScope.launch {
+            try {
+                repository.addSupabaseFeedback(fb)
+                Log.d("ReclaimViewModel", "Feedback successfully backed up to Supabase.")
+            } catch (e: Exception) {
+                Log.e("ReclaimViewModel", "Supabase feedback backup skipped (standard fallback enabled): ${e.message}")
+            }
+        }
     }
+
+    fun deleteFeedback(id: String) {
+        FirebaseFirestore.getInstance().collection("user_feedback").document(id).delete()
+            .addOnSuccessListener {
+                showToast("Feedback comment removed successfully.", "SUCCESS")
+            }
+    }
+
+    private fun startListeningToFeedback() {
+        feedbackListener = FirebaseFirestore.getInstance().collection("user_feedback")
+            .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, _ ->
+                if (snapshot != null) {
+                    if (snapshot.isEmpty) {
+                        seedDefaultFeedback()
+                    } else {
+                        val list = snapshot.map { doc ->
+                            FeedbackItem(
+                                id = doc.id,
+                                type = doc.getString("type") ?: "Comment",
+                                email = doc.getString("email") ?: "",
+                                text = doc.getString("text") ?: "",
+                                rating = doc.getLong("rating")?.toInt() ?: 5,
+                                timestamp = doc.getLong("timestamp") ?: 0L,
+                                isApproved = doc.getBoolean("isApproved") ?: true
+                            )
+                        }
+                        _uiState.update { it.copy(userFeedbackList = list) }
+                    }
+                }
+            }
+    }
+
+    private fun seedDefaultFeedback() {
+        val db = FirebaseFirestore.getInstance()
+        val list = listOf(
+            FeedbackItem("", "Rating", "m***@gmail.com", "My ticket was verified in under 12 hours. Best recovery assistance ever, support agent guided me step-by-step!", 5, System.currentTimeMillis() - 86400000),
+            FeedbackItem("", "Comment", "x***x@yahoo.com", "Make sure you have your linked Google email active when submitting the case. Got my account back safely!", 5, System.currentTimeMillis() - 172800000),
+            FeedbackItem("", "Bug", "l***9@reclaim.com", "The feedback submission didn't load first time on mobile data, but worked flawlessly on WiFi.", 4, System.currentTimeMillis() - 259200000),
+            FeedbackItem("", "Suggestion", "g***p@outlook.com", "Please add more detailed visual guides for restoring Facebook links. App is super clean though!", 5, System.currentTimeMillis() - 345600000)
+        )
+        for (item in list) {
+            val map = hashMapOf(
+                "type" to item.type,
+                "email" to item.email,
+                "text" to item.text,
+                "rating" to item.rating,
+                "isApproved" to item.isApproved,
+                "timestamp" to item.timestamp
+            )
+            db.collection("user_feedback").add(map)
+        }
+    }
+
+    private fun startListeningToTips() {
+        tipsListener = FirebaseFirestore.getInstance().collection("recovery_tips")
+            .orderBy("timestamp", com.google.firebase.firestore.Query.Direction.DESCENDING)
+            .addSnapshotListener { snapshot, _ ->
+                if (snapshot != null) {
+                    if (snapshot.isEmpty) {
+                        seedDefaultTips()
+                    } else {
+                        val list = snapshot.map { doc ->
+                            RecoveryTip(
+                                id = doc.id,
+                                title = doc.getString("title") ?: "",
+                                content = doc.getString("content") ?: "",
+                                category = doc.getString("category") ?: "General Check",
+                                timestamp = doc.getLong("timestamp") ?: 0L
+                            )
+                        }
+                        _uiState.update { it.copy(recoveryTips = list) }
+                    }
+                }
+            }
+    }
+
+    private fun seedDefaultTips() {
+        val db = FirebaseFirestore.getInstance()
+        val defaultTips = listOf(
+            RecoveryTip("", "Two-Factor Authentication (2FA)", "Enable App-based 2FA (Google/Microsoft Authenticator) across all linked identity centers to prevent intrusion.", "Security Audit", System.currentTimeMillis() - 100000),
+            RecoveryTip("", "Valid Recovery Outlets", "Ensure your secondary mailbox or authorization linked devices remain safe, verified, and accessible.", "Prerequisites", System.currentTimeMillis() - 200000),
+            RecoveryTip("", "Prevent Credential Leakage", "Real support assistants will never request your account password, validation tokens, or bank lock headers.", "Critical Safety", System.currentTimeMillis() - 300000),
+            RecoveryTip("", "Linked Subsystems Sync", "Regularly review and log out unfamiliar clients from Google, Play Games, Game Center or Steam settings under linked apps.", "Management", System.currentTimeMillis() - 400000)
+        )
+        for (tip in defaultTips) {
+            val map = hashMapOf(
+                "title" to tip.title,
+                "content" to tip.content,
+                "category" to tip.category,
+                "timestamp" to tip.timestamp
+            )
+            db.collection("recovery_tips").add(map)
+        }
+    }
+
+    fun addRecoveryTip(title: String, content: String, category: String) {
+        val map = hashMapOf(
+            "title" to title,
+            "content" to content,
+            "category" to category,
+            "timestamp" to System.currentTimeMillis()
+        )
+        FirebaseFirestore.getInstance().collection("recovery_tips").add(map)
+            .addOnSuccessListener {
+                showToast("Support Tip published successfully.", "SUCCESS")
+            }
+            .addOnFailureListener {
+                showToast("Failed to publish tip.", "ERROR")
+            }
+    }
+
+    fun deleteRecoveryTip(id: String) {
+        FirebaseFirestore.getInstance().collection("recovery_tips").document(id).delete()
+            .addOnSuccessListener {
+                showToast("Support Tip deleted successfully.", "SUCCESS")
+            }
+    }
+
+// ==========================================
+// CHAT SYSTEM LOGIC
+// ==========================================
+
+fun fetchChatDirectory() {
+    viewModelScope.launch {
+        try {
+            val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            db.collection("reclaim_profiles").limit(50).get().addOnSuccessListener { snapshot ->
+                val list = snapshot.documents.mapNotNull { doc ->
+                    val logo = doc.getString("profileLogoUri") ?: doc.getString("firebasePhotoUrl") ?: doc.getString("photoUrl")
+                    AdminUserItem(
+                        uid = doc.id,
+                        playerName = doc.getString("playerName") ?: doc.getString("googleAccountName") ?: "Unknown",
+                        playerUid = doc.getString("playerUid") ?: "",
+                        status = doc.getString("status") ?: "Unknown",
+                        profileLogoUri = logo
+                    )
+                }.filter { it.uid != com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid }.distinctBy { it.uid }
+                _uiState.update { it.copy(chatDirectory = list) }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("ReclaimViewModel", "Failed to fetch chat directory: ${e.message}")
+        }
+    }
+}
+
+fun searchChatUser(query: String) {
+    if (query.isBlank()) {
+        _uiState.update { it.copy(searchedChatUser = null) }
+        return
+    }
+    viewModelScope.launch {
+        try {
+            val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            db.collection("reclaim_profiles").document(query).get().addOnSuccessListener { resultByUid ->
+                if (resultByUid.exists()) {
+                    val logo = resultByUid.getString("profileLogoUri") ?: resultByUid.getString("firebasePhotoUrl") ?: resultByUid.getString("photoUrl")
+                    val item = AdminUserItem(
+                        uid = resultByUid.id,
+                        playerName = resultByUid.getString("playerName") ?: resultByUid.getString("googleAccountName") ?: "Unknown",
+                        playerUid = resultByUid.getString("playerUid") ?: "",
+                        status = resultByUid.getString("status") ?: "Unknown",
+                        profileLogoUri = logo
+                    )
+                    _uiState.update { it.copy(searchedChatUser = item) }
+                } else {
+                    db.collection("reclaim_profiles").whereEqualTo("playerUid", query).get().addOnSuccessListener { resultByPlayerId ->
+                        if (!resultByPlayerId.isEmpty) {
+                            val doc = resultByPlayerId.documents[0]
+                            val logo = doc.getString("profileLogoUri") ?: doc.getString("firebasePhotoUrl") ?: doc.getString("photoUrl")
+                            val item = AdminUserItem(
+                                uid = doc.id,
+                                playerName = doc.getString("playerName") ?: doc.getString("googleAccountName") ?: "Unknown",
+                                playerUid = doc.getString("playerUid") ?: "",
+                                status = doc.getString("status") ?: "Unknown",
+                                profileLogoUri = logo
+                            )
+                            _uiState.update { it.copy(searchedChatUser = item) }
+                        } else {
+                            showToast("User not found.", "ERROR")
+                            _uiState.update { it.copy(searchedChatUser = null) }
+                        }
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            showToast("Search failed: ${e.message}", "ERROR")
+        }
+    }
+}
+
+fun sendChatConnectionRequest(receiverUid: String, receiverPlayerId: String, receiverName: String) {
+    val state = _uiState.value
+    if (state.isChatSuspended || state.isDeviceBanned) {
+        showToast("You are suspended from chat.", "ERROR")
+        return
+    }
+    viewModelScope.launch {
+        try {
+            val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            val reqId = java.util.UUID.randomUUID().toString()
+            val senderUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "google_${(state.googleAccountEmail ?: "guest").hashCode()}"
+            val isDev = receiverUid == "oshaq_dev_uid"
+            
+            val req = ChatConnectionRequest(
+                id = reqId,
+                senderUid = senderUid,
+                senderPlayerId = state.targetPlayerUid,
+                senderName = state.googleAccountName ?: "Unknown",
+                receiverUid = receiverUid,
+                receiverPlayerId = receiverPlayerId,
+                receiverName = receiverName,
+                status = if (isDev) "approved" else "pending_receiver",
+                timestamp = System.currentTimeMillis()
+            )
+            
+            val batch = db.batch()
+            batch.set(db.collection("chat_requests").document(reqId), req)
+            if (isDev) {
+                val connId = java.util.UUID.randomUUID().toString()
+                val conn = ChatConnection(
+                    id = connId,
+                    user1Uid = senderUid,
+                    user2Uid = receiverUid,
+                    user1Name = state.googleAccountName ?: "Unknown",
+                    user2Name = receiverName,
+                    lastMessage = "System: Connected with Developer.",
+                    lastMessageTime = System.currentTimeMillis()
+                )
+                batch.set(db.collection("chat_connections").document(connId), conn)
+            }
+            batch.commit().addOnSuccessListener {
+                showToast(if (isDev) "Connected with Developer!" else "Connection Request Sent", "SUCCESS")
+                _uiState.update { it.copy(searchedChatUser = null) }
+                if (!isDev) {
+                    sendFCMNotification(
+                        title = "New Connection Request",
+                        message = "${state.googleAccountName ?: "Someone"} wants to connect with you.",
+                        targetAudience = receiverUid
+                    )
+                }
+            }.addOnFailureListener { e ->
+                showToast("Failed to send request: ${e.message}", "ERROR")
+            }
+        } catch (e: Exception) {
+            showToast("Failed to send request: ${e.message}", "ERROR")
+        }
+    }
+}
+
+fun cancelChatConnectionRequest(receiverUid: String) {
+    val state = _uiState.value
+    val myUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "google_${(state.googleAccountEmail ?: "guest").hashCode()}"
+    viewModelScope.launch {
+        try {
+            val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            db.collection("chat_requests")
+                .whereEqualTo("senderUid", myUid)
+                .whereEqualTo("receiverUid", receiverUid)
+                .whereEqualTo("status", "pending_receiver")
+                .get()
+                .addOnSuccessListener { snapshot ->
+                    val batch = db.batch()
+                    for (doc in snapshot.documents) {
+                        batch.delete(doc.reference)
+                    }
+                    batch.commit().addOnSuccessListener {
+                        showToast("Connection Request Cancelled", "SUCCESS")
+                    }
+                }
+        } catch (e: Exception) {
+            showToast("Failed to cancel: ${e.message}", "ERROR")
+        }
+    }
+}
+
+fun acceptChatConnectionRequest(reqId: String) {
+    val state = _uiState.value
+    viewModelScope.launch {
+        try {
+            val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            db.collection("chat_requests").document(reqId).get().addOnSuccessListener { doc ->
+                if (doc.exists()) {
+                    val senderUid = doc.getString("senderUid") ?: ""
+                    val senderName = doc.getString("senderName") ?: "Someone"
+                    val receiverUid = doc.getString("receiverUid") ?: ""
+                    val receiverName = doc.getString("receiverName") ?: state.googleAccountName ?: "Someone"
+                    
+                    db.runTransaction { tx ->
+                        val reqRef = db.collection("chat_requests").document(reqId)
+                        tx.update(reqRef, "status", "approved")
+                        
+                        val connId = java.util.UUID.randomUUID().toString()
+                        val conn = ChatConnection(
+                            id = connId,
+                            user1Uid = senderUid,
+                            user2Uid = receiverUid,
+                            user1Name = senderName,
+                            user2Name = receiverName,
+                            lastMessage = "Connected!",
+                            lastMessageTime = System.currentTimeMillis()
+                        )
+                        tx.set(db.collection("chat_connections").document(connId), conn)
+                        null
+                    }.addOnSuccessListener {
+                        showToast("Connection Approved!", "SUCCESS")
+                        sendFCMNotification(
+                            title = "Connection Approved",
+                            message = "You are now connected with $receiverName!",
+                            targetAudience = senderUid
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            showToast("Failed: ${e.message}", "ERROR")
+        }
+    }
+}
+
+fun adminApproveChatRequest(reqId: String, user1Uid: String, user1Name: String, user2Uid: String, user2Name: String) {
+    if (!_uiState.value.isAdminMode) return
+    viewModelScope.launch {
+        try {
+            val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            db.runTransaction { tx ->
+                val reqRef = db.collection("chat_requests").document(reqId)
+                tx.update(reqRef, "status", "approved")
+                
+                val connId = java.util.UUID.randomUUID().toString()
+                val conn = ChatConnection(
+                    id = connId,
+                    user1Uid = user1Uid,
+                    user2Uid = user2Uid,
+                    user1Name = user1Name,
+                    user2Name = user2Name,
+                    lastMessage = "Connected!",
+                    lastMessageTime = System.currentTimeMillis()
+                )
+                tx.set(db.collection("chat_connections").document(connId), conn)
+                null
+            }.addOnSuccessListener {
+                showToast("Connection Approved.", "SUCCESS")
+                sendFCMNotification(
+                    title = "Connection Approved",
+                    message = "Admin approved your connection with $user2Name!",
+                    targetAudience = user1Uid
+                )
+                sendFCMNotification(
+                    title = "Connection Approved",
+                    message = "Admin approved your connection with $user1Name!",
+                    targetAudience = user2Uid
+                )
+            }
+        } catch (e: Exception) {
+            showToast("Failed: ${e.message}", "ERROR")
+        }
+    }
+}
+
+fun sendDirectMessage(connId: String, content: String) {
+    val state = _uiState.value
+    if (state.isChatSuspended || state.isDeviceBanned) {
+        showToast("You are suspended from chat.", "ERROR")
+        return
+    }
+    viewModelScope.launch {
+        try {
+            val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+            db.collection("chat_connections").document(connId).get().addOnSuccessListener { doc ->
+                if (doc.exists()) {
+                    val user1Uid = doc.getString("user1Uid") ?: ""
+                    val user2Uid = doc.getString("user2Uid") ?: ""
+                    val senderName = state.googleAccountName ?: "Someone"
+                    val myUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "google_${(state.googleAccountEmail ?: "guest").hashCode()}"
+                    val targetUid = if (myUid == user1Uid) user2Uid else user1Uid
+                    
+                    val msgId = java.util.UUID.randomUUID().toString()
+                    val hasLink = content.contains("http://") || content.contains("https://")
+                    val msg = DirectChatMessage(
+                        id = msgId,
+                        connectionId = connId,
+                        senderUid = myUid,
+                        content = content,
+                        containsLink = hasLink,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    
+                    db.runTransaction { tx ->
+                        tx.set(db.collection("direct_messages").document(msgId), msg)
+                        tx.update(db.collection("chat_connections").document(connId), mapOf(
+                            "lastMessage" to content,
+                            "lastMessageTime" to System.currentTimeMillis()
+                        ))
+                        null
+                    }.addOnSuccessListener {
+                        sendFCMNotification(
+                            title = senderName,
+                            message = content,
+                            targetAudience = targetUid
+                        )
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            showToast("Failed to send message: ${e.message}", "ERROR")
+        }
+    }
+}
+
+fun deleteDirectMessage(msgId: String) {
+    viewModelScope.launch {
+        try {
+            com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                .collection("direct_messages").document(msgId).delete()
+                .addOnSuccessListener {
+                    showToast("Message un-sent", "SUCCESS")
+                }
+        } catch (e: Exception) {
+            showToast("Failed to delete message: ${e.message}", "ERROR")
+        }
+    }
+}
+
+fun editDirectMessage(msgId: String, newContent: String) {
+    viewModelScope.launch {
+        try {
+            com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                .collection("direct_messages").document(msgId).update("content", newContent)
+                .addOnSuccessListener {
+                    showToast("Message edited", "SUCCESS")
+                }
+        } catch (e: Exception) {
+            showToast("Failed to edit message: ${e.message}", "ERROR")
+        }
+    }
+}
+
+fun adminSuspendUserChat(uid: String, suspend: Boolean) {
+    if (!_uiState.value.isAdminMode) return
+    viewModelScope.launch {
+        try {
+            com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                .collection("reclaim_profiles").document(uid).update("isChatSuspended", suspend)
+            showToast(if (suspend) "User Chat Suspended" else "Chat Suspension Lifted", "SUCCESS")
+        } catch (e: Exception) {
+            showToast("Failed: ${e.message}", "ERROR")
+        }
+    }
+}
+
+fun adminBanUserDevice(uid: String, ban: Boolean) {
+    if (!_uiState.value.isAdminMode) return
+    viewModelScope.launch {
+        try {
+            com.google.firebase.firestore.FirebaseFirestore.getInstance()
+                .collection("reclaim_profiles").document(uid).update("isDeviceBanned", ban)
+            showToast(if (ban) "Device Banned" else "Device Ban Lifted", "SUCCESS")
+        } catch (e: Exception) {
+            showToast("Failed: ${e.message}", "ERROR")
+        }
+    }
+}
+
+fun listenToChatConnections() {
+    val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: "google_${(_uiState.value.googleAccountEmail ?: "guest").hashCode()}"
+    val db = com.google.firebase.firestore.FirebaseFirestore.getInstance()
+    
+    // Connections where user is user1
+    db.collection("chat_connections").whereEqualTo("user1Uid", uid)
+        .addSnapshotListener { snap1, _ ->
+            val conns1 = snap1?.documents?.mapNotNull { it.toObject(ChatConnection::class.java) } ?: emptyList()
+            db.collection("chat_connections").whereEqualTo("user2Uid", uid)
+                .addSnapshotListener { snap2, _ ->
+                    val conns2 = snap2?.documents?.mapNotNull { it.toObject(ChatConnection::class.java) } ?: emptyList()
+                    val all = (conns1 + conns2).sortedByDescending { it.lastMessageTime }
+                    _uiState.update { it.copy(chatConnections = all) }
+                }
+        }
+        
+    // Requests received or sent
+    db.collection("chat_requests").whereEqualTo("receiverUid", uid).whereEqualTo("status", "pending_receiver")
+        .addSnapshotListener { snapReceived, _ ->
+            val receivedReqs = snapReceived?.documents?.mapNotNull { it.toObject(ChatConnectionRequest::class.java) } ?: emptyList()
+            db.collection("chat_requests").whereEqualTo("senderUid", uid).whereEqualTo("status", "pending_receiver")
+                .addSnapshotListener { snapSent, _ ->
+                    val sentReqs = snapSent?.documents?.mapNotNull { it.toObject(ChatConnectionRequest::class.java) } ?: emptyList()
+                    val allReqs = (receivedReqs + sentReqs).distinctBy { it.id }
+                    _uiState.update { it.copy(chatConnectionRequests = allReqs) }
+                }
+        }
+        
+    // Admin pending requests
+    if (_uiState.value.isAdminMode) {
+        db.collection("chat_requests").whereEqualTo("status", "pending_admin")
+            .addSnapshotListener { snap, _ ->
+                val reqs = snap?.documents?.mapNotNull { it.toObject(ChatConnectionRequest::class.java) } ?: emptyList()
+                _uiState.update { it.copy(adminPendingChatRequests = reqs) }
+            }
+    }
+}
+
+fun openChatConnection(connId: String) {
+    _uiState.update { it.copy(activeChatConnectionId = connId) }
+    com.google.firebase.firestore.FirebaseFirestore.getInstance()
+        .collection("direct_messages").whereEqualTo("connectionId", connId)
+        .addSnapshotListener { snap, _ ->
+            val msgs = snap?.documents?.mapNotNull { it.toObject(DirectChatMessage::class.java) }?.sortedBy { it.timestamp }?.distinctBy { it.id } ?: emptyList()
+            _uiState.update { it.copy(activeDirectChatMessages = msgs) }
+        }
+}
+
+fun closeChatConnection() {
+    _uiState.update { it.copy(activeChatConnectionId = null, activeDirectChatMessages = emptyList()) }
+}
 
     override fun onCleared() {
         super.onCleared()
@@ -3124,6 +4288,11 @@ class ReclaimViewModel : ViewModel() {
         casesListener?.remove()
         messagesListener?.remove()
         updatesListener?.remove()
+        profilesListener?.remove()
+        promoCodesListener?.remove()
+        userProfileListener?.remove()
+        feedbackListener?.remove()
+        tipsListener?.remove()
     }
 }
 
@@ -3164,10 +4333,9 @@ private val defaultNotificationLogs = listOf(
     )
 )
 
-private val defaultRecoveryHistory = listOf(
-    RecoveryHistoryLogItem("REC-5082", "Oshaq Playz", "5482910772", "2026-06-11 14:22", "COMPLETED", "Direct Email Layer Recovery"),
-    RecoveryHistoryLogItem("REC-4903", "YouTube", "3904817290", "2026-06-12 09:15", "FAILED", "In-game Token Authentication")
-)
+// END OF CHAT LOGIC
+
+private val defaultRecoveryHistory = emptyList<RecoveryHistoryLogItem>()
 
 data class AdminUserItem(
     val uid: String = "",
@@ -3179,7 +4347,8 @@ data class AdminUserItem(
     val userRank: String = "Silver Recruit",
     val userRole: String = "User",
     val googleAccountName: String? = null,
-    val googleAccountEmail: String? = null
+    val googleAccountEmail: String? = null,
+    val profileLogoUri: String? = null
 )
 
 data class PromoCode(

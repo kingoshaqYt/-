@@ -24,25 +24,8 @@ private val DarkColorScheme = darkColorScheme(
     onSurface = DarkOnSurface
 )
 
-private val LightColorScheme = lightColorScheme(
-    primary = ReclaimSecondary,
-    secondary = ReclaimPrimary,
-    tertiary = ReclaimTertiary,
-    background = LightBackground,
-    surface = LightSurface,
-    onBackground = LightOnBackground,
-    onSurface = LightOnSurface
-)
-
-private val TitaniumColorScheme = lightColorScheme(
-    primary = Color(0xFF000000),
-    secondary = Color(0xFF475569),
-    tertiary = Color(0xFF0F172A),
-    background = Color(0xFFFFFFFF),
-    surface = Color(0xFFFAFAFA),
-    onBackground = Color(0xFF000000),
-    onSurface = Color(0xFF000000)
-)
+private val LightColorScheme = DarkColorScheme
+private val TitaniumColorScheme = DarkColorScheme
 
 @Composable
 fun MyApplicationTheme(

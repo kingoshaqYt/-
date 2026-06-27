@@ -24,6 +24,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Offset
@@ -65,9 +66,18 @@ import com.google.firebase.auth.auth
 import com.google.firebase.auth.GoogleAuthProvider
 import kotlinx.coroutines.tasks.await
 
+val textCol = androidx.compose.ui.graphics.Color.White
+val subTextCol = androidx.compose.ui.graphics.Color.White.copy(alpha = 0.7f)
+
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        var instance: MainActivity? = null
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        instance = this
         try {
             com.google.android.gms.ads.MobileAds.initialize(this) {
                 com.example.ui.AdmobManager.loadInterstitial(this)
@@ -83,7 +93,185 @@ class MainActivity : ComponentActivity() {
             val state by vModel.uiState.collectAsState()
             val context = androidx.compose.ui.platform.LocalContext.current
 
-            // One-time only login persistence controller
+            var isWatchingAd by remember { mutableStateOf(false) }
+            var adCountdown by remember { mutableStateOf(5) }
+
+            LaunchedEffect(isWatchingAd) {
+                if (isWatchingAd) {
+                    while (adCountdown > 0) {
+                        delay(1000L)
+                        adCountdown--
+                    }
+                    isWatchingAd = false
+                    vModel.grantDemoCredits(50)
+                    vModel.showToast("Ad Sourced Successfully! +50 Credits Secured.", "SUCCESS")
+                }
+            }
+
+            val permissionLauncherRoot = androidx.activity.compose.rememberLauncherForActivityResult(
+                contract = androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+            ) { isGranted -> }
+
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+                    if (androidx.core.content.ContextCompat.checkSelfPermission(
+                            context, android.Manifest.permission.POST_NOTIFICATIONS
+                        ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+                    ) {
+                        permissionLauncherRoot.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+                try {
+                    com.google.firebase.messaging.FirebaseMessaging.getInstance().subscribeToTopic("all")
+                        .addOnCompleteListener { task ->
+                            if (task.isSuccessful) {
+                                println("Firebase Messaging: Subscribed to 'all' topic successfully.")
+                            }
+                        }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
+            // Fallback device notification observer for immediate local dispatch
+            androidx.compose.runtime.LaunchedEffect(state.lastReceivedNotification) {
+                state.lastReceivedNotification?.let { (title, message) ->
+                    try {
+                        val channelId = "reclaim_device_alerts"
+                        val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            val channel = android.app.NotificationChannel(
+                                channelId,
+                                "Device Alerts",
+                                android.app.NotificationManager.IMPORTANCE_HIGH
+                            ).apply {
+                                description = "Reclaim immediate fallback alerts"
+                            }
+                            notificationManager.createNotificationChannel(channel)
+                        }
+
+                        val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
+                            .setSmallIcon(android.R.drawable.ic_dialog_info)
+                            .setContentTitle(title)
+                            .setContentText(message)
+                            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                            .setAutoCancel(true)
+
+                        notificationManager.notify(System.currentTimeMillis().toInt(), builder.build())
+                        android.widget.Toast.makeText(context, "📡 Local Alert Fired on Device", android.widget.Toast.LENGTH_SHORT).show()
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                    vModel.clearLastNotification()
+                }
+            }
+
+            // Critical Force Update Full Screen Modal Block
+            if (state.forceUpdateApp) {
+                androidx.compose.ui.window.Dialog(
+                    onDismissRequest = { /* Cannot dismiss! Force Update required */ },
+                    properties = androidx.compose.ui.window.DialogProperties(
+                        dismissOnBackPress = false,
+                        dismissOnClickOutside = false
+                    )
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(24.dp))
+                            .liquidGlass(intensity = GlassIntensity.ULTRA, cornerRadius = 24.dp)
+                            .border(1.5.dp, Color(0xFF0A84FF).copy(0.4f), RoundedCornerShape(24.dp))
+                            .padding(24.dp)
+                    ) {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.SystemUpdateAlt,
+                                contentDescription = "Critical System Update Icon",
+                                tint = Color(0xFF0A84FF),
+                                modifier = Modifier.size(54.dp)
+                            )
+
+                            Text(
+                                text = "CRITICAL UPDATE REQUIRED",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Black,
+                                color = if (state.isDarkTheme) Color.White else Color(0xFF0F172A),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                letterSpacing = 0.5.sp
+                            )
+
+                            Text(
+                                text = "A new critical system update of RECLAIM is available. To maintain cryptographic secure bypass handshakes and live table synchronization APIs, please update to Version ${state.updateVerName} (${state.updateVerCode}) immediately.",
+                                fontSize = 11.sp,
+                                color = if (state.isDarkTheme) Color.White.copy(0.7f) else Color(0xFF475569),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                lineHeight = 16.sp
+                            )
+
+                            // Changelog Box
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(if (state.isDarkTheme) Color.White.copy(0.06f) else Color.Black.copy(0.06f), RoundedCornerShape(12.dp))
+                                    .padding(12.dp)
+                            ) {
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text(
+                                        text = "CHANGELOG:",
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF0A84FF)
+                                    )
+                                    Text(
+                                        text = state.updateChangelog,
+                                        fontSize = 10.sp,
+                                        color = if (state.isDarkTheme) Color.White.copy(0.9f) else Color(0xFF0F172A),
+                                        lineHeight = 14.sp
+                                    )
+                                }
+                            }
+
+                            // Dynamic Action Buttons
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        try {
+                                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(state.updateApkUrl))
+                                            context.startActivity(intent)
+                                        } catch (e: Exception) {
+                                            android.widget.Toast.makeText(context, "Invalid update link.", android.widget.Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34C759)),
+                                    modifier = Modifier.weight(1f).height(44.dp),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("UPDATE NOW", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Black)
+                                }
+
+                                Button(
+                                    onClick = {
+                                        (context as? android.app.Activity)?.finish()
+                                        System.exit(0)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = if (state.isDarkTheme) Color.White.copy(0.12f) else Color.Black.copy(0.08f)),
+                                    modifier = Modifier.weight(1f).height(44.dp),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Text("EXIT APP", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (state.isDarkTheme) Color.White else Color.Black)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             val sharedPrefs = remember { context.getSharedPreferences("reclaim_prefs", android.content.Context.MODE_PRIVATE) }
             val wasLoggedIn = remember { sharedPrefs.getBoolean("is_logged_in", false) }
             val savedEmail = remember { sharedPrefs.getString("logged_in_email", "bypass@reclaim.com") ?: "bypass@reclaim.com" }
@@ -217,13 +405,90 @@ class MainActivity : ComponentActivity() {
             }
 
             MyApplicationTheme(themeMode = state.themeMode) {
-                // Ambient background with solid base color
+                // Ambient background with GPU Skia draw Behind glowing orbs (SYSTEM B SAFE)
+                val neonCyan = Color(0xFF00F2FE)
+                val brightYellow = Color(0xFFFFCC00) // vivid yellow accent
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
-                        .background(if (state.isDarkTheme) Color(0xFF020617) else Color.White)
+                        .background(if (state.isDarkTheme) Color(0xFF000000) else Color.White) // Deep black base
+                        .drawBehind {
+                            if (state.isDarkTheme) {
+                                val canvasWidth = size.width
+                                val canvasHeight = size.height
+
+                                // 1. Top-Left Cyan Bleed (System B Canvas Anchored)
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(neonCyan.copy(alpha = 0.20f), Color.Transparent),
+                                        center = Offset(canvasWidth * 0.15f, canvasHeight * 0.22f),
+                                        radius = canvasWidth * 0.85f
+                                    ),
+                                    radius = canvasWidth * 0.85f,
+                                    center = Offset(canvasWidth * 0.15f, canvasHeight * 0.22f)
+                                )
+
+                                // 2. Bottom-Right Yellow Bleed
+                                drawCircle(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(brightYellow.copy(alpha = 0.18f), Color.Transparent),
+                                        center = Offset(canvasWidth * 0.85f, canvasHeight * 0.8f),
+                                        radius = canvasWidth * 0.9f
+                                    ),
+                                    radius = canvasWidth * 0.9f,
+                                    center = Offset(canvasWidth * 0.85f, canvasHeight * 0.8f)
+                                )
+                            }
+                        }
                         .paperTexture(alpha = if (state.isDarkTheme) 0.08f else 0.04f)
                 ) {
+                    if (isWatchingAd) {
+                        androidx.compose.ui.window.Dialog(
+                            onDismissRequest = { /* Prevent dismiss */ },
+                            properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+                        ) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp)
+                                    .border(1.5.dp, Color(0xFFFFC107), RoundedCornerShape(24.dp)),
+                                shape = RoundedCornerShape(24.dp),
+                                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(28.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        progress = (5 - adCountdown) / 5f,
+                                        color = Color(0xFFFFC107),
+                                        modifier = Modifier.size(56.dp)
+                                    )
+                                    Text(
+                                        text = "STREAMING RECLAIM ADS PORTAL...",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFFFFC107),
+                                        letterSpacing = 1.sp
+                                    )
+                                    Text(
+                                        text = "Securing premium credits sponsor link. Do not close.",
+                                        fontSize = 10.sp,
+                                        color = textCol.copy(alpha = 0.7f),
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Text(
+                                        text = "SECURE SPONSOR FEED: $adCountdown SEC REMAINING",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = textCol
+                                    )
+                                }
+                            }
+                        }
+                    }
+
                     val backgroundUrl = if (state.isDarkTheme) {
                         "https://i.postimg.cc/0QCFPDJh/Picsart-26-06-17-16-58-44-713.jpg"
                     } else {
@@ -284,6 +549,7 @@ class MainActivity : ComponentActivity() {
                                     this
                                 }
                             }
+                            .glowingAmbientOrbs()
                             .paperTexture(alpha = if (state.isDarkTheme) 0.1f else 0.02f)
                             .depth3D(cornerRadius = 0.dp, isDark = state.isDarkTheme),
                         color = Color.Transparent
@@ -322,6 +588,7 @@ class MainActivity : ComponentActivity() {
                                             NavigationTab.HOME -> HomeScreen(vModel, state)
                                             NavigationTab.RECOVERY -> RecoveryScreen(vModel, state)
                                             NavigationTab.TOOLS -> ToolsScreen(vModel, state)
+                                            NavigationTab.CHAT -> com.example.ui.ChatScreen(vModel, state)
                                             NavigationTab.NOTIFICATIONS -> NotificationsScreen(vModel, state)
                                             NavigationTab.PROFILE -> ProfileScreen(vModel, state)
                                         }
@@ -342,6 +609,7 @@ class MainActivity : ComponentActivity() {
                                 FloatingLiquidBottomNav(
                                     currentTab = state.currentTab,
                                     isDarkTheme = state.isDarkTheme,
+                                    unreadCount = state.userNotificationLogs.count { it.isUnread },
                                     onTabSelected = { tab ->
                                         if (tab == NavigationTab.HOME && state.currentTab == NavigationTab.HOME) {
                                             vModel.triggerProgressRefresh()
@@ -394,7 +662,7 @@ class MainActivity : ComponentActivity() {
                                     )
                                     Text(
                                         text = state.toastMessage,
-                                        color = Color.White,
+                                        color = textCol,
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.weight(1f)
@@ -445,7 +713,7 @@ class MainActivity : ComponentActivity() {
                                             Text(
                                                 text = "Your restoration appeal for PUBG Character ID #${state.targetPlayerUid} was analyzed and rejected by our verification nodes. Please recheck your profile credentials or resubmit accurate account parameters under step 2.",
                                                 fontSize = 11.sp,
-                                                color = Color.White.copy(alpha = 0.75f),
+                                                color = textCol.copy(alpha = 0.75f),
                                                 textAlign = TextAlign.Center,
                                                 lineHeight = 16.sp
                                             )
@@ -456,7 +724,7 @@ class MainActivity : ComponentActivity() {
                                                 shape = RoundedCornerShape(12.dp),
                                                 modifier = Modifier.fillMaxWidth().height(42.dp)
                                             ) {
-                                                Text("ACKNOWLEDGE & ADJUST PROFILE", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color.White)
+                                                Text("ACKNOWLEDGE & ADJUST PROFILE", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = textCol)
                                             }
                                         }
                                     }
@@ -506,7 +774,7 @@ class MainActivity : ComponentActivity() {
                                             Text(
                                                 text = "Congratulations! Your account appeal has been successfully verified! Automatic restoration rewards have been released. Secure coins increased by +100 credits.",
                                                 fontSize = 11.sp,
-                                                color = Color.White.copy(alpha = 0.75f),
+                                                color = textCol.copy(alpha = 0.75f),
                                                 textAlign = TextAlign.Center,
                                                 lineHeight = 16.sp
                                             )
@@ -567,7 +835,7 @@ class MainActivity : ComponentActivity() {
                                             Text(
                                                 text = "Your daily +25 secure coins check-in is ready! Claim now to maintain your active streak.",
                                                 fontSize = 11.sp,
-                                                color = Color.White.copy(alpha = 0.8f),
+                                                color = textCol.copy(alpha = 0.8f),
                                                 textAlign = TextAlign.Center,
                                                 lineHeight = 16.sp
                                             )
@@ -643,7 +911,7 @@ class MainActivity : ComponentActivity() {
                                                 shape = RoundedCornerShape(12.dp),
                                                 modifier = Modifier.fillMaxWidth().height(42.dp)
                                             ) {
-                                                Text("ACKNOWLEDGE", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = Color.White)
+                                                Text("ACKNOWLEDGE", fontWeight = FontWeight.Bold, fontSize = 11.sp, color = textCol)
                                             }
                                         }
                                     }
@@ -698,7 +966,7 @@ class MainActivity : ComponentActivity() {
                                                     Icon(
                                                         imageVector = Icons.Default.Close,
                                                         contentDescription = "Close",
-                                                        tint = Color.White.copy(0.4f),
+                                                        tint = textCol.copy(0.4f),
                                                         modifier = Modifier.size(16.dp)
                                                     )
                                                 }
@@ -715,7 +983,7 @@ class MainActivity : ComponentActivity() {
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
                                                 Column {
-                                                    Text("Current SecureBalance", fontSize = 9.sp, color = Color.White.copy(0.5f))
+                                                    Text("Current SecureBalance", fontSize = 9.sp, color = textCol.copy(0.5f))
                                                     Text("${state.userCredits} SecureCoins", fontSize = 16.sp, fontWeight = FontWeight.Black, color = Color(0xFFFFD700))
                                                 }
                                                 Box(
@@ -736,7 +1004,7 @@ class MainActivity : ComponentActivity() {
                                                     modifier = Modifier.fillMaxWidth(),
                                                     horizontalArrangement = Arrangement.SpaceBetween
                                                 ) {
-                                                    Text("Daily Check-in Streak", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(0.7f))
+                                                    Text("Daily Check-in Streak", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = textCol.copy(0.7f))
                                                     Text("${state.streakDays} consecutive days", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF34C759))
                                                 }
                                                 
@@ -806,7 +1074,7 @@ class MainActivity : ComponentActivity() {
                                                         text = "Next Claim In: $timerText",
                                                         fontSize = 11.sp,
                                                         fontWeight = FontWeight.Bold,
-                                                        color = Color.White.copy(0.7f)
+                                                        color = textCol.copy(0.7f)
                                                     )
                                                 }
                                             }
@@ -833,11 +1101,11 @@ class MainActivity : ComponentActivity() {
                                                 }
                                             }
 
-                                            HorizontalDivider(color = Color.White.copy(0.08f))
+                                            HorizontalDivider(color = textCol.copy(0.08f))
 
                                             // Apply Promo Code directly inside rewards hub
                                             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                                Text("Redeem Premium Promo Code", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(0.6f))
+                                                Text("Redeem Premium Promo Code", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = textCol.copy(0.6f))
                                                 var promoInputText by remember { mutableStateOf("") }
                                                 
                                                 Row(
@@ -850,7 +1118,7 @@ class MainActivity : ComponentActivity() {
                                                             value = promoInputText,
                                                             onValueChange = { promoInputText = it.uppercase() },
                                                             textStyle = androidx.compose.ui.text.TextStyle(
-                                                                color = Color.White,
+                                                                color = textCol,
                                                                 fontSize = 11.sp,
                                                                 fontWeight = FontWeight.Bold,
                                                                 letterSpacing = 1.sp
@@ -864,7 +1132,7 @@ class MainActivity : ComponentActivity() {
                                                                 .padding(horizontal = 10.dp, vertical = 11.dp)
                                                         ) { innerTextField ->
                                                             if (promoInputText.isEmpty()) {
-                                                                Text("ENTER PROMO CODE", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(0.3f))
+                                                                Text("ENTER PROMO CODE", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = textCol.copy(0.3f))
                                                             }
                                                             innerTextField()
                                                         }
@@ -937,31 +1205,31 @@ class MainActivity : ComponentActivity() {
                                                     Icon(
                                                         imageVector = Icons.Default.Close,
                                                         contentDescription = "Close",
-                                                        tint = Color.White.copy(0.5f),
+                                                        tint = textCol.copy(0.5f),
                                                         modifier = Modifier.size(16.dp)
                                                     )
                                                 }
                                             }
 
-                                            HorizontalDivider(color = Color.White.copy(0.08f))
+                                            HorizontalDivider(color = textCol.copy(0.08f))
 
                                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                                 Text(
                                                     text = "From: PUBG Mobile Security Board <compliance@pubgm.com>",
                                                     fontSize = 9.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = Color.White.copy(0.81f)
+                                                    color = textCol.copy(0.81f)
                                                 )
                                                 Text(
-                                                    text = "To: ${state.googleAccountEmail ?: "oshaqplayz@gmail.com"}",
+                                                    text = "To: ${state.googleAccountEmail ?: "guest@reclaim.com"}",
                                                     fontSize = 9.sp,
-                                                    color = Color.White.copy(0.55f)
+                                                    color = textCol.copy(0.55f)
                                                 )
                                                 Text(
                                                     text = "Subject: Urgent compliance audit: Account UID #${state.activeCheatsWarningUid}",
                                                     fontSize = 11.sp,
                                                     fontWeight = FontWeight.Black,
-                                                    color = Color.White
+                                                    color = textCol
                                                 )
                                             }
 
@@ -977,7 +1245,7 @@ class MainActivity : ComponentActivity() {
                                                     text = "Dear @${state.activeCheatsWarningName},",
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.Bold,
-                                                    color = Color.White
+                                                    color = textCol
                                                 )
                                                 Text(
                                                     text = "Our systems detected secondary compliance decoupling signatures targeting Server Partition unbans. The account unban appeal has failed, and the simulation parameters have recorded suspicious system activity:\n\n" +
@@ -990,7 +1258,7 @@ class MainActivity : ComponentActivity() {
                                                 Text(
                                                     text = "Please submit an updated anti-cheat compliance certificate or clear current device cache traces to proceed with further support inquiries.",
                                                     fontSize = 9.sp,
-                                                    color = Color.White.copy(0.5f),
+                                                    color = textCol.copy(0.5f),
                                                     lineHeight = 13.sp
                                                 )
                                             }
@@ -1084,7 +1352,7 @@ class MainActivity : ComponentActivity() {
                                                 )
                                             }
                                             
-                                            HorizontalDivider(color = Color.White.copy(0.08f))
+                                            HorizontalDivider(color = textCol.copy(0.08f))
                                             
                                             // Active options
                                             Button(
@@ -1227,14 +1495,14 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                         text = "SPONSORED CAMPAIGN LIVE",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Black,
-                        color = Color.White,
+                        color = textCol,
                         letterSpacing = 2.sp
                     )
                     
                     Text(
                         text = adStatusText,
                         fontSize = 11.sp,
-                        color = Color.White.copy(0.6f),
+                        color = textCol.copy(0.6f),
                         textAlign = TextAlign.Center
                     )
 
@@ -1253,7 +1521,7 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                     Text(
                         text = "Credits will be deposited immediately after stream.",
                         fontSize = 9.sp,
-                        color = Color.White.copy(0.4f)
+                        color = textCol.copy(0.4f)
                     )
                 }
             }
@@ -1307,7 +1575,7 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                                 text = "CREDIT & REWARD CENTER",
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Black,
-                                color = Color.White,
+                                color = textCol,
                                 letterSpacing = 1.sp
                             )
                         }
@@ -1324,7 +1592,7 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                             Icon(
                                 imageVector = Icons.Default.Close,
                                 contentDescription = "Close window panel",
-                                tint = Color.White.copy(0.6f)
+                                tint = textCol.copy(0.6f)
                             )
                         }
                     }
@@ -1343,7 +1611,7 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                             text = "AVAILABLE SANDBOX BALANCE",
                             fontSize = 8.5.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.White.copy(0.5f),
+                            color = textCol.copy(0.5f),
                             letterSpacing = 0.5.sp
                         )
                         Text(
@@ -1355,7 +1623,7 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                         Text(
                             text = if (state.isGuest) "Guest sandbox mode active" else if (state.isUnlimitedCredits) "Promo code active: ${state.activatedPromoCode}" else "Google authenticated credits profile",
                             fontSize = 9.sp,
-                            color = Color.White.copy(0.35f)
+                            color = textCol.copy(0.35f)
                         )
                     }
 
@@ -1398,8 +1666,8 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                             OutlinedTextField(
                                 value = promoInput,
                                 onValueChange = { promoInput = it },
-                                placeholder = { Text("Enter Promo Code (e.g. UNLIMITED)", fontSize = 10.sp, color = Color.White.copy(0.35f)) },
-                                textStyle = TextStyle(color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold),
+                                placeholder = { Text("Enter Promo Code (e.g. UNLIMITED)", fontSize = 10.sp, color = textCol.copy(0.35f)) },
+                                textStyle = TextStyle(color = textCol, fontSize = 11.sp, fontWeight = FontWeight.Bold),
                                 shape = RoundedCornerShape(10.dp),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     unfocusedBorderColor = Color.White.copy(0.12f),
@@ -1434,18 +1702,165 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                         }
                     }
 
+                    // BUILDER STORE: PURCHASE SECURE CREDITS & BUNDLES
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(Color.White.copy(0.02f), RoundedCornerShape(16.dp))
+                            .border(0.5.dp, Color(0xFF0A84FF).copy(0.2f), RoundedCornerShape(16.dp))
+                            .padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "BUILDER STORE - PURCHASE CREDITS",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF0A84FF),
+                                letterSpacing = 0.5.sp
+                            )
+                            Box(
+                                modifier = Modifier
+                                    .background(Color(0xFF0A84FF).copy(0.12f), RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(
+                                    text = "SECURE BILLING",
+                                    fontSize = 7.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF0A84FF)
+                                )
+                            }
+                        }
+
+                        // Option 1: active buy - 1000 credits for $0.99
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color.White.copy(0.04f), RoundedCornerShape(12.dp))
+                                .border(0.5.dp, Color(0xFF0A84FF).copy(0.3f), RoundedCornerShape(12.dp))
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "1,000 SECURE CREDITS BUNDLE",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = textCol
+                                )
+                                Text(
+                                    text = "Acquire 1,000 unban restoration credits",
+                                    fontSize = 8.5.sp,
+                                    color = textCol.copy(0.5f)
+                                )
+                            }
+                            
+                            val toastContext = androidx.compose.ui.platform.LocalContext.current
+                            Button(
+                                onClick = {
+                                    android.widget.Toast.makeText(toastContext, "0.99$ Credit Bundle Option Coming Soon! Credits are actively obtainable via watching free sponsored ads. 🚀", android.widget.Toast.LENGTH_LONG).show()
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFFFFC107)
+                                ),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(34.dp).bevelGlow(glowColor = Color(0xFFFFC107), cornerRadius = 8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp)
+                            ) {
+                                Text("$0.99", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                            }
+                        }
+
+                        // Option 2: locked bundle
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color.White.copy(0.01f), RoundedCornerShape(12.dp))
+                                .border(0.5.dp, Color.White.copy(0.05f), RoundedCornerShape(12.dp))
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "5,000 ELITE SECURE BUNDLE",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textCol.copy(0.4f)
+                                )
+                                Text(
+                                    text = "Bundles and other features coming soon",
+                                    fontSize = 8.5.sp,
+                                    color = textCol.copy(0.3f)
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .background(Color.White.copy(0.05f), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text("LOCKED", fontSize = 7.5.sp, fontWeight = FontWeight.Bold, color = textCol.copy(0.4f))
+                            }
+                        }
+
+                        // Option 3: locked bundle
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(Color.White.copy(0.01f), RoundedCornerShape(12.dp))
+                                .border(0.5.dp, Color.White.copy(0.05f), RoundedCornerShape(12.dp))
+                                .padding(10.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "10,000 EXTREME BYPASS BUNDLE",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = textCol.copy(0.4f)
+                                )
+                                Text(
+                                    text = "Bundles and other features coming soon",
+                                    fontSize = 8.5.sp,
+                                    color = textCol.copy(0.3f)
+                                )
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .background(Color.White.copy(0.05f), RoundedCornerShape(6.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text("LOCKED", fontSize = 7.5.sp, fontWeight = FontWeight.Bold, color = textCol.copy(0.4f))
+                            }
+                        }
+                    }
+
                     // Actions block
                     Column(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
                         // Action 1: Watch Ad
+                        val activity = androidx.activity.compose.LocalActivity.current
                         Button(
                             onClick = {
                                 try {
                                     haptic.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
                                 } catch (e: Exception) {}
-                                isWatchingAd = true
+                                if (activity != null) {
+                                    com.example.ui.AdmobManager.showRewardedAd(activity) { amount ->
+                                        vModel.watchSponsoredAd()
+                                    }
+                                } else {
+                                    vModel.watchSponsoredAd()
+                                }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.05f)),
                             border = BorderStroke(0.5.dp, Color(0xFF34C759).copy(0.5f)),
@@ -1560,12 +1975,12 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                                 "Database Sync: firebase_credits",
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = textCol
                             )
                             Text(
                                 "Collection: credits (userId, balance, lastUpdated)",
                                 fontSize = 8.sp,
-                                color = Color.White.copy(0.4f)
+                                color = textCol.copy(0.4f)
                             )
                         }
 
@@ -1598,14 +2013,14 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                             Icon(
                                 imageVector = Icons.Default.History,
                                 contentDescription = "History indicator icon",
-                                tint = Color.White.copy(0.6f),
+                                tint = textCol.copy(0.6f),
                                 modifier = Modifier.size(14.dp)
                             )
                             Text(
                                 text = "AD CAMPAIGN & VIEW HISTORY LOGS",
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White.copy(0.6f)
+                                color = textCol.copy(0.6f)
                             )
                         }
 
@@ -1621,7 +2036,7 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                                 Text(
                                     "No ad reward transaction histories stored.",
                                     fontSize = 10.sp,
-                                    color = Color.White.copy(0.3f)
+                                    color = textCol.copy(0.3f)
                                 )
                             }
                         } else {
@@ -1644,7 +2059,7 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                                         Text(
                                             text = log,
                                             fontSize = 9.sp,
-                                            color = Color.White.copy(0.7f),
+                                            color = textCol.copy(0.7f),
                                             modifier = Modifier.weight(1f)
                                         )
                                         Box(
@@ -1671,7 +2086,7 @@ fun PremiumModal(vModel: ReclaimViewModel, onDismiss: () -> Unit) {
                     Text(
                         text = "SECURE SANDBOX DISCLAIMER: RECLAIM does not manufacture, compromise, or modify genuine server databases. All simulation credits displayed hold zero physical, external, or commercial value.",
                         fontSize = 7.5.sp,
-                        color = Color.White.copy(0.35f),
+                        color = textCol.copy(0.35f),
                         textAlign = TextAlign.Center,
                         lineHeight = 10.sp
                     )
@@ -1700,12 +2115,12 @@ fun PremiumLockedContent(
                 Icon(
                     imageVector = Icons.Default.Lock,
                     contentDescription = "Locked",
-                    tint = Color.White,
+                    tint = textCol,
                     modifier = Modifier.size(32.dp)
                 )
                 Text(
                     text = "Premium Feature",
-                    color = Color.White,
+                    color = textCol,
                     fontWeight = FontWeight.Bold
                 )
             }
@@ -1735,7 +2150,7 @@ fun CustomCreditLogo(modifier: Modifier = Modifier, size: androidx.compose.ui.un
             text = "R",
             fontSize = (size.value * 0.55).sp,
             fontWeight = FontWeight.ExtraBold,
-            color = Color.White,
+            color = textCol,
             fontFamily = FontFamily.Monospace,
             modifier = Modifier.offset(y = (-0.5).dp)
         )
@@ -1776,7 +2191,7 @@ fun CreditDisplay(credits: Int, onExpand: () -> Unit) {
                 text = "$targetCount",
                 fontSize = 14.sp,
                 fontWeight = FontWeight.ExtraBold,
-                color = Color.White
+                color = textCol
             )
         }
     }
@@ -1784,6 +2199,9 @@ fun CreditDisplay(credits: Int, onExpand: () -> Unit) {
 
 @Composable
 fun AppTopBar(vModel: ReclaimViewModel, state: ReclaimUiState) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    var showAdminUpdatePushDialog by remember { mutableStateOf(false) }
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
@@ -1803,19 +2221,59 @@ fun AppTopBar(vModel: ReclaimViewModel, state: ReclaimUiState) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 modifier = Modifier.bounceClick { vModel.changeTab(NavigationTab.HOME) }
             ) {
-                Icon(
-                    imageVector = Icons.Default.Lock,
-                    contentDescription = "RECLAIM Secure App logo",
-                    tint = Color(0xFF34C759),
-                    modifier = Modifier.size(18.dp)
-                )
-                Text(
-                    text = "RECLAIM",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Black,
-                    color = if (state.isDarkTheme) Color.White else Color(0xFF0F172A),
-                    letterSpacing = 1.sp
-                )
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .background(
+                            Brush.radialGradient(listOf(Color(0xFF8B5CF6), Color(0xFF6D28D9))),
+                            CircleShape
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(Icons.Default.Lock, contentDescription = "RECLAIM", tint = Color.White, modifier = Modifier.size(14.dp))
+                }
+                Column {
+                    Text(
+                        text = "RECLAIM",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Black,
+                        color = if (state.isDarkTheme) Color.White else Color(0xFF0F172A),
+                        letterSpacing = 1.sp
+                    )
+                    if (state.isAdminMode) {
+                        Text(
+                            text = "ADMIN MODE",
+                            fontSize = 7.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF8B5CF6),
+                            letterSpacing = 1.sp
+                        )
+                    }
+                }
+            }
+
+            // Admin Update Push - Red Center Top Button (Only shown to admins)
+            if (state.isAdminMode) {
+                Button(
+                    onClick = { showAdminUpdatePushDialog = true },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF8B5CF6),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    modifier = Modifier
+                        .height(26.dp)
+                        .animateContentSize()
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(10.dp), tint = Color.White)
+                        Text("PUSH UPDATE", fontSize = 8.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp)
+                    }
+                }
             }
 
             // Action controls on the Right
@@ -1828,7 +2286,7 @@ fun AppTopBar(vModel: ReclaimViewModel, state: ReclaimUiState) {
                     vModel.togglePremiumModal(true)
                 })
 
-                // Home icon moved to the top-right
+                // Home/Profile icon in the top-right
                 IconButton(
                     onClick = { 
                         if (state.isLoggedIn && !state.isGuest && !state.googleAccountName.isNullOrBlank()) {
@@ -1839,7 +2297,47 @@ fun AppTopBar(vModel: ReclaimViewModel, state: ReclaimUiState) {
                     },
                     modifier = Modifier.size(36.dp)
                 ) {
-                    if (state.isLoggedIn && !state.isGuest && !state.googleAccountName.isNullOrBlank()) {
+                    val firebasePhotoUrl = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.photoUrl?.toString()
+                    val avatarUrlModel = if (!state.profileLogoUri.isNullOrEmpty()) {
+                        state.profileLogoUri
+                    } else if (!firebasePhotoUrl.isNullOrEmpty()) {
+                        firebasePhotoUrl
+                    } else {
+                        null
+                    }
+
+                    if (!avatarUrlModel.isNullOrEmpty()) {
+                        SubcomposeAsyncImage(
+                            model = avatarUrlModel,
+                            contentDescription = "Custom User Avatar",
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .border(1.dp, Color(0xFF0A84FF), androidx.compose.foundation.shape.CircleShape),
+                            contentScale = ContentScale.Crop,
+                            loading = {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator(modifier = Modifier.size(10.dp), strokeWidth = 1.dp, color = Color(0xFF0A84FF))
+                                }
+                            },
+                            error = {
+                                Box(
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clip(androidx.compose.foundation.shape.CircleShape)
+                                        .background(Color(0xFF0A84FF)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = if (!state.googleAccountName.isNullOrBlank()) state.googleAccountName.first().uppercase() else "P",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                }
+                            }
+                        )
+                    } else if (state.isLoggedIn && !state.isGuest && !state.googleAccountName.isNullOrBlank()) {
                         Box(
                             modifier = Modifier
                                 .size(24.dp)
@@ -1863,6 +2361,125 @@ fun AppTopBar(vModel: ReclaimViewModel, state: ReclaimUiState) {
                         )
                     }
                 }
+            }
+        }
+    }
+
+    if (state.isAdminMode && showAdminUpdatePushDialog) {
+        ReclaimDialog(onDismiss = { showAdminUpdatePushDialog = false }) {
+            var isCheckingUpdates by remember { mutableStateOf(false) }
+            var updateStatusText by remember { mutableStateOf("") }
+            val coroutineScope = rememberCoroutineScope()
+            
+            Text(
+                text = "SECURE UPDATE PANEL",
+                fontSize = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = textCol,
+                modifier = Modifier.padding(bottom = 8.dp)
+            )
+            Text(
+                text = "Select from the authorized channels below to push updates or verify your secure client version.",
+                fontSize = 12.sp,
+                color = Color.Gray,
+                modifier = Modifier.padding(bottom = 20.dp)
+            )
+            
+            // Pop up 1: WhatsApp Admin
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://chat.whatsapp.com/FFUy9FCSnqiHOVwnrz5kF5?s=cl&p=a&mlu=1"))
+                        context.startActivity(intent)
+                    }
+                    .padding(vertical = 6.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1F2937)),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(Color(0xFF25D366).copy(0.15f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("WA", color = Color(0xFF25D366), fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text("WhatsApp Support", fontWeight = FontWeight.Bold, color = textCol)
+                        Text("Contact official admin channels to check and push updates manually.", fontSize = 11.sp, color = Color.Gray)
+                    }
+                }
+            }
+            
+            // Pop up 2: Checks Update
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable {
+                        if (!isCheckingUpdates) {
+                            isCheckingUpdates = true
+                            updateStatusText = "Connecting to recovery payload repository..."
+                            coroutineScope.launch {
+                                delay(1200)
+                                updateStatusText = "Verifying client signatures..."
+                                delay(1000)
+                                updateStatusText = "Your client is up-to-date! Secure V1.4 Active."
+                                isCheckingUpdates = false
+                            }
+                        }
+                    }
+                    .padding(vertical = 6.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1F2937)),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .background(Color(4286331629).copy(0.15f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Check", tint = Color(4286331629))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text("Check Secure Server", fontWeight = FontWeight.Bold, color = textCol)
+                        Text("Automated query to check for secure payload updates.", fontSize = 11.sp, color = Color.Gray)
+                    }
+                }
+            }
+            
+            if (updateStatusText.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (isCheckingUpdates) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp, color = Color(4286331629))
+                        Spacer(modifier = Modifier.width(8.dp))
+                    }
+                    Text(text = updateStatusText, fontSize = 12.sp, color = Color(4286331629), fontWeight = FontWeight.Medium)
+                }
+            }
+            
+            Spacer(modifier = Modifier.height(20.dp))
+            Button(
+                onClick = { showAdminUpdatePushDialog = false },
+                colors = ButtonDefaults.buttonColors(containerColor = Color.White.copy(0.1f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Dismiss", color = textCol)
             }
         }
     }
@@ -1949,35 +2566,26 @@ fun SupabaseImageSlider(sliders: List<com.example.data.SupabaseSlider>, intensit
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
+                        horizontalArrangement = Arrangement.Start,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Box(
-                            modifier = Modifier
-                                .background(Brush.linearGradient(listOf(Color(0xFF0A84FF), Color(0xFF0055CC))), RoundedCornerShape(8.dp))
-                                .padding(horizontal = 10.dp, vertical = 6.dp)
-                                .shadow(8.dp, RoundedCornerShape(8.dp), ambientColor = Color(0xFF0A84FF), spotColor = Color(0xFF0A84FF))
-                        ) {
-                            Text(currentSlide.badge ?: "FEATURED", fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = Color.White, letterSpacing = 1.sp)
-                        }
-                        
-                        Box(
-                            modifier = Modifier
-                                .background(Color.White.copy(0.1f), RoundedCornerShape(12.dp))
-                                .border(0.5.dp, Color.White.copy(0.3f), RoundedCornerShape(12.dp))
-                                .padding(horizontal = 8.dp, vertical = 4.dp)
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                Box(modifier = Modifier.size(6.dp).background(Color(0xFF34C759), CircleShape).shadow(4.dp, spotColor = Color(0xFF34C759)))
-                                Text("LIVE", fontSize = 9.sp, color = Color.White, fontWeight = FontWeight.Bold)
+                        val sliderBadge = (currentSlide.badge ?: "FEATURED").uppercase()
+                        if (sliderBadge != "LIVE" && !sliderBadge.contains("LIVE")) {
+                            Box(
+                                modifier = Modifier
+                                    .background(Brush.linearGradient(listOf(Color(0xFF0A84FF), Color(0xFF0055CC))), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 10.dp, vertical = 6.dp)
+                                    .shadow(8.dp, RoundedCornerShape(8.dp), ambientColor = Color(0xFF0A84FF), spotColor = Color(0xFF0A84FF))
+                            ) {
+                                Text(sliderBadge, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, color = textCol, letterSpacing = 1.sp)
                             }
                         }
                     }
 
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(currentSlide.title ?: "", fontSize = 20.sp, fontWeight = FontWeight.Black, color = Color.White, letterSpacing = 0.5.sp)
+                        Text(currentSlide.title ?: "", fontSize = 20.sp, fontWeight = FontWeight.Black, color = textCol, letterSpacing = 0.5.sp)
                         Spacer(modifier = Modifier.height(6.dp))
-                        Text(currentSlide.description ?: "", fontSize = 13.sp, color = Color.White.copy(alpha = 0.85f), maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp)
+                        Text(currentSlide.description ?: "", fontSize = 13.sp, color = textCol.copy(alpha = 0.85f), maxLines = 2, overflow = TextOverflow.Ellipsis, lineHeight = 16.sp)
                     }
                 }
             }
@@ -2008,6 +2616,1040 @@ fun SupabaseImageSlider(sliders: List<com.example.data.SupabaseSlider>, intensit
 // 1. HOME SCREEN
 @Composable
 fun HomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val textCol = if (state.isDarkTheme) Color.White else Color(0xFF0F172A)
+    val subTextCol = if (state.isDarkTheme) Color.White.copy(0.7f) else Color(0xFF475569)
+    val cardBgCol = if (state.isDarkTheme) Color.White.copy(0.04f) else Color.Black.copy(0.04f)
+    val cardBorderCol = if (state.isDarkTheme) Color.White.copy(0.08f) else Color.Black.copy(0.08f)
+
+    var showFeedbackFormDialog by remember { mutableStateOf(false) }
+    var showDeviceScanDialog by remember { mutableStateOf(false) }
+    
+    // Feedback form input variables
+    var fbEmail by remember { mutableStateOf(state.googleAccountEmail ?: "") }
+    var fbType by remember { mutableStateOf("Comment") }
+    var fbText by remember { mutableStateOf("") }
+    var fbRating by remember { mutableStateOf(5) }
+
+    // Device secure audit variables
+    var isScanningDevice by remember { mutableStateOf(false) }
+    var scanProgress by remember { mutableStateOf(0f) }
+    var scanCompleted by remember { mutableStateOf(false) }
+
+    val coroutineScope = rememberCoroutineScope()
+
+    // Dialog overlays (Using glassmorphism / clear visibility)
+    if (showFeedbackFormDialog) {
+        ReclaimDialog(onDismiss = { showFeedbackFormDialog = false }) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "Submit Feed / Suggestion".uppercase(),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = textCol
+                        )
+                        IconButton(onClick = { showFeedbackFormDialog = false }) {
+                            Icon(imageVector = Icons.Default.Close, contentDescription = "Close", tint = textCol.copy(0.6f))
+                        }
+                    }
+
+                    // Type Selector
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        listOf("Comment", "Bug", "Rating", "Suggestion").forEach { type ->
+                            Box(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(if (fbType == type) Color(0xFF0A84FF) else cardBgCol)
+                                    .clickable { fbType = type }
+                                    .padding(vertical = 6.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = type,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (fbType == type) Color.White else Color.White
+                                )
+                            }
+                        }
+                    }
+
+                    // Email input
+                    OutlinedTextField(
+                        value = fbEmail,
+                        onValueChange = { fbEmail = it },
+                        modifier = Modifier.fillMaxWidth().height(52.dp),
+                        label = { Text("Your Registered Email", fontSize = 10.sp, color = subTextCol) },
+                        textStyle = TextStyle(color = textCol, fontSize = 12.sp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF0A84FF),
+                            unfocusedBorderColor = cardBorderCol
+                        )
+                    )
+
+                    // Message text
+                    OutlinedTextField(
+                        value = fbText,
+                        onValueChange = { fbText = it },
+                        modifier = Modifier.fillMaxWidth().height(100.dp),
+                        label = { Text("Write your comments, bug reports, features...", fontSize = 10.sp, color = subTextCol) },
+                        textStyle = TextStyle(color = textCol, fontSize = 12.sp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF0A84FF),
+                            unfocusedBorderColor = cardBorderCol
+                        )
+                    )
+
+                    // Stars
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Rating Score:", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textCol)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            (1..5).forEach { star ->
+                                val active = (star <= fbRating)
+                                Icon(
+                                    imageVector = if (active) Icons.Default.Star else Icons.Default.StarBorder,
+                                    contentDescription = "Star $star",
+                                    tint = if (active) Color(0xFFFFCC00) else Color.White.copy(alpha = 0.3f),
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clickable { fbRating = star }
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = { showFeedbackFormDialog = false },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color.Transparent, contentColor = Color.White),
+                            modifier = Modifier.weight(1f).border(1.dp, cardBorderCol, RoundedCornerShape(10.dp))
+                        ) {
+                            Text("Cancel", fontSize = 11.sp)
+                        }
+                        Button(
+                            onClick = {
+                                if (fbEmail.isNotBlank() && fbText.isNotBlank()) {
+                                    vModel.submitFeedback(fbType, fbEmail, fbText, fbRating)
+                                    fbText = ""
+                                    showFeedbackFormDialog = false
+                                } else {
+                                    android.widget.Toast.makeText(context, "Please fill out all fields", android.widget.Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A84FF), contentColor = Color.White),
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Submit", fontSize = 11.sp, fontWeight = FontWeight.Black)
+                        }
+                    }
+        }
+    }
+
+    if (showDeviceScanDialog) {
+        ReclaimDialog(onDismiss = { showDeviceScanDialog = false }) {
+                    Text(
+                        text = "Device Security Diagnostic".uppercase(),
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textCol
+                    )
+
+                    if (!isScanningDevice && !scanCompleted) {
+                        Text(
+                            text = "Initiate a complete secure audit scan of your local physical devices and connected network credentials to establish trust with unban gateways.",
+                            fontSize = 11.sp,
+                            textAlign = TextAlign.Center,
+                            color = subTextCol
+                        )
+                        Button(
+                            onClick = {
+                                isScanningDevice = true
+                                scanProgress = 0f
+                                coroutineScope.launch {
+                                    while (scanProgress < 1f) {
+                                        delay(100)
+                                        scanProgress += 0.05f
+                                    }
+                                    isScanningDevice = false
+                                    scanCompleted = true
+                                    vModel.showToast("Local device certificates verified successfully.", "SUCCESS")
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34C759), contentColor = Color.Black),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Perform Diagnostic Scan", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+                    } else if (isScanningDevice) {
+                        CircularProgressIndicator(progress = { scanProgress }, modifier = Modifier.size(60.dp), color = Color(0xFF34C759))
+                        Text(
+                            text = "Scanning authentication links... ${(scanProgress * 100).toInt()}%",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textCol
+                        )
+                    } else if (scanCompleted) {
+                        Icon(imageVector = Icons.Default.CheckCircle, contentDescription = "Verified", tint = Color(0xFF34C759), modifier = Modifier.size(60.dp))
+                        Text(
+                            text = "Device Credential Secure",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Black,
+                            color = textCol
+                        )
+                        Text(
+                            text = "Security Handshake verified on your device. Unban probability optimized.",
+                            fontSize = 10.sp,
+                            textAlign = TextAlign.Center,
+                            color = subTextCol
+                        )
+                        Button(
+                            onClick = {
+                                showDeviceScanDialog = false
+                                scanCompleted = false
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A84FF), contentColor = Color.White),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Finish Audit", fontSize = 11.sp)
+                        }
+                    }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Pinned Profile Header Card at the very top of HomeScreen
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, top = 12.dp)
+                .liquidGlass(intensity = state.glassIntensity, cornerRadius = 20.dp)
+                .padding(16.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(Color(0xFF0A84FF).copy(0.12f), CircleShape)
+                        .border(1.5.dp, Color(0xFF0A84FF), CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = (state.googleAccountName ?: "G").take(1).uppercase(),
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color(0xFF0A84FF)
+                    )
+                }
+
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = state.googleAccountName ?: "Guest Account",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textCol
+                    )
+                    Text(
+                        text = state.googleAccountEmail ?: "Local Anonymous Guest Mode",
+                        fontSize = 10.sp,
+                        color = subTextCol
+                    )
+                }
+
+                if (state.googleAccountName != null) {
+                    IconButton(
+                        onClick = { vModel.changeTab(NavigationTab.CHAT) },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.Forum, contentDescription = "Chat", tint = Color(4286331629))
+                    }
+                    IconButton(
+                        onClick = { vModel.logout() },
+                        modifier = Modifier.size(36.dp)
+                    ) {
+                        Icon(imageVector = Icons.Default.ExitToApp, contentDescription = "Sign Out", tint = Color(0xFFFF5252))
+                    }
+                }
+            }
+        }
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            contentPadding = PaddingValues(top = 16.dp, bottom = 16.dp)
+        ) {
+                // Premium Integrated Header Slider Carousel
+                item {
+                    SupabaseImageSlider(sliders = state.supabaseSliders, intensity = state.glassIntensity)
+                }
+
+                // Dynamic success rate display row
+                item {
+                    var dynamicSuccess by remember { mutableStateOf(10.0) }
+                    LaunchedEffect(Unit) {
+                        var direction = -1f
+                        while(true) {
+                            delay(1000)
+                            val step = (Math.random() * 0.25).toFloat()
+                            if (dynamicSuccess >= 10.0) {
+                                direction = -1f
+                            } else if (dynamicSuccess <= 0.01) {
+                                direction = 1f
+                            } else if (Math.random() > 0.70) {
+                                direction = -direction
+                            }
+                            val next = dynamicSuccess + (direction * step)
+                            dynamicSuccess = next.coerceIn(0.01, 10.0)
+                        }
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(cardBgCol, RoundedCornerShape(12.dp))
+                            .border(0.5.dp, cardBorderCol, RoundedCornerShape(12.dp))
+                            .padding(12.dp)
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Text(
+                                text = "★ RANK: VIP EXECUTIVE RESTORER",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFFFFCC00),
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "ESTIMATED SUCCESS RATE",
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = textCol.copy(alpha = 0.5f),
+                                letterSpacing = 0.5.sp
+                            )
+                            Text(
+                                text = "${String.format(java.util.Locale.US, "%.3f", dynamicSuccess)}%",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF34C759),
+                                fontFamily = FontFamily.Monospace
+                            )
+                            Text(
+                                text = "Organic real-time variance link calibration active (10% to 0.01%)",
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = textCol.copy(alpha = 0.35f)
+                            )
+                        }
+                    }
+                }
+
+                // 1. ACCOUNT RECOVERY STATUS SECTION
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "ACCOUNT RECOVERY STATUS",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textCol,
+                        letterSpacing = 1.sp
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .liquidGlass(intensity = state.glassIntensity, cornerRadius = 18.dp)
+                            .padding(16.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text("RESTORE TARGET", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = subTextCol)
+                                    Text(
+                                        text = if (!state.targetPlayerName.isNullOrBlank()) state.targetPlayerName else "No Active Target",
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = if (!state.targetPlayerName.isNullOrBlank()) Color(0xFF0A84FF) else Color.White.copy(0.4f)
+                                    )
+                                }
+                                Column(horizontalAlignment = Alignment.End) {
+                                    Text("PLAYER ID", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = subTextCol)
+                                    Text(
+                                        text = if (!state.targetPlayerUid.isNullOrBlank()) "ID: ${state.targetPlayerUid}" else "Unlinked",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = textCol
+                                    )
+                                }
+                            }
+
+                            HorizontalDivider(color = cardBorderCol)
+
+                            val steps = listOf(
+                                "Account Submitted" to (state.currentRecoveryScore >= 3f),
+                                "Information Intake Checked" to (state.currentRecoveryScore >= 5f),
+                                "Support Agent Under Review" to (state.currentRecoveryScore >= 8f),
+                                "Handover Completed Safely" to (state.currentRecoveryScore >= 10f)
+                            )
+
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                steps.forEachIndexed { index, (label, isDone) ->
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(16.dp)
+                                                .background(
+                                                    if (isDone) Color(0xFF34C759) else Color.White.copy(0.12f),
+                                                    CircleShape
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            if (isDone) {
+                                                Icon(imageVector = Icons.Default.Check, contentDescription = "Done", tint = Color.Black, modifier = Modifier.size(10.dp))
+                                            } else {
+                                                Text(text = "${index + 1}", fontSize = 8.sp, color = textCol)
+                                            }
+                                        }
+                                        Text(
+                                            text = label,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = if (isDone) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isDone) Color.White else Color.White.copy(0.4f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            if (state.targetPlayerName.isNullOrBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Button(
+                                    onClick = { vModel.changeTab(NavigationTab.RECOVERY) },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A84FF), contentColor = Color.White),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text("Link Account & Try Recovery", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 2. RECOVERY REQUESTS TICKETS LIST
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "YOUR ACTIVE RECOVERY REQUESTS",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textCol,
+                        letterSpacing = 1.sp
+                    )
+
+                    val cases = state.supportCases
+                    if (cases.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                "No active requests. Submit one under the 'Recovery' tab to begin synchronization.",
+                                fontSize = 10.sp,
+                                textAlign = TextAlign.Center,
+                                color = subTextCol
+                            )
+                        }
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            cases.forEach { activeCase ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                        .clickable { vModel.selectCase(activeCase) }
+                                        .padding(14.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = activeCase.title.uppercase(),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.ExtraBold,
+                                                color = textCol
+                                            )
+                                            Text(
+                                                text = "Subject: ${activeCase.description}",
+                                                fontSize = 9.sp,
+                                                color = subTextCol,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+
+                                        Box(
+                                            modifier = Modifier
+                                                .background(
+                                                    when (activeCase.status.lowercase()) {
+                                                        "open" -> Color(0xFF0A84FF).copy(0.15f)
+                                                        "pending" -> Color(0xFFFFCC00).copy(0.15f)
+                                                        else -> Color(0xFF34C759).copy(0.15f)
+                                                    },
+                                                    RoundedCornerShape(6.dp)
+                                                )
+                                                .border(
+                                                    0.5.dp,
+                                                    when (activeCase.status.lowercase()) {
+                                                        "open" -> Color(0xFF0A84FF)
+                                                        "pending" -> Color(0xFFFFCC00)
+                                                        else -> Color(0xFF34C759)
+                                                    },
+                                                    RoundedCornerShape(6.dp)
+                                                )
+                                                .padding(horizontal = 8.dp, vertical = 2.dp)
+                                        ) {
+                                            Text(
+                                                text = activeCase.status.uppercase(),
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Black,
+                                                color = when (activeCase.status.lowercase()) {
+                                                    "open" -> Color(0xFF0A84FF)
+                                                    "pending" -> Color(0xFFFFCC00)
+                                                    else -> Color(0xFF34C759)
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. NOTIFICATIONS CENTER
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "NOTIFICATIONS CENTER",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = textCol,
+                            letterSpacing = 1.sp
+                        )
+                        Box(
+                            modifier = Modifier
+                                .background(Color(0xFF0A84FF).copy(0.2f), CircleShape)
+                                .size(14.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("1", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0A84FF))
+                        }
+                    }
+
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        state.userNotificationLogs.take(3).forEach { log ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                    .padding(12.dp)
+                            ) {
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(24.dp)
+                                            .background(
+                                                if (log.isUnread) Color(0xFF0A84FF).copy(0.15f) else Color.White.copy(0.06f),
+                                                CircleShape
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = if (log.isUnread) Icons.Default.NotificationsActive else Icons.Default.Notifications,
+                                            contentDescription = null,
+                                            tint = if (log.isUnread) Color(0xFF0A84FF) else Color.White.copy(0.4f),
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(log.title.uppercase(), fontSize = 9.sp, fontWeight = FontWeight.Black, color = textCol)
+                                            Text(log.timestamp, fontSize = 7.5.sp, color = subTextCol.copy(0.7f))
+                                        }
+                                        Text(log.body, fontSize = 9.sp, color = subTextCol, lineHeight = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 4. RECOVERY ASSISTANT TOOLS GRID
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "RECOVERY ASSISTANTS",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textCol,
+                        letterSpacing = 1.sp
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                .clickable { vModel.toggleAiChatDialog(true) }
+                                .padding(12.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(imageVector = Icons.Default.Face, contentDescription = "AI Specialist", tint = Color(0xFF0A84FF), modifier = Modifier.size(20.dp))
+                                Text("AI Chat Specialist", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
+                                Text("Speak to Gemini security unban expert.", fontSize = 8.sp, color = subTextCol, maxLines = 2)
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                .clickable { showDeviceScanDialog = true }
+                                .padding(12.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(imageVector = Icons.Default.CheckCircle, contentDescription = "Check", tint = Color(0xFF34C759), modifier = Modifier.size(20.dp))
+                                Text("Device Safe Audit", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
+                                Text("Check cache files for certificate integrity.", fontSize = 8.sp, color = subTextCol, maxLines = 2)
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .weight(1f)
+                                .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                .clickable { vModel.changeTab(NavigationTab.TOOLS) }
+                                .padding(12.dp)
+                        ) {
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Icon(imageVector = Icons.Default.MailOutline, contentDescription = "SMTP Appeals", tint = Color(0xFFFFCC00), modifier = Modifier.size(20.dp))
+                                Text("Mail Appeals", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
+                                Text("Draft official appeal letters to app stores.", fontSize = 8.sp, color = subTextCol, maxLines = 2)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 5. COMMUNITY FEEDBACK RATING SECTION
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "COMMUNITY FEEDBACK",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = textCol,
+                            letterSpacing = 1.sp
+                        )
+                        TextButton(onClick = { showFeedbackFormDialog = true }) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Icon(imageVector = Icons.Default.AddComment, contentDescription = null, tint = Color(0xFF0A84FF), modifier = Modifier.size(14.dp))
+                                Text("Submit Review", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0A84FF))
+                            }
+                        }
+                    }
+
+                    val comments = state.userFeedbackList
+                    if (comments.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("No reviews yet. Be the first to share your experience!", fontSize = 10.sp, color = subTextCol)
+                        }
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            comments.take(4).forEach { item ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                        .padding(12.dp)
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                                Box(
+                                                    modifier = Modifier.size(16.dp).background(Color(0xFF0A84FF).copy(0.1f), CircleShape),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(text = item.type.take(1), fontSize = 8.sp, fontWeight = FontWeight.Bold, color = Color(0xFF0A84FF))
+                                                }
+                                                Text(text = item.email, fontSize = 9.sp, fontWeight = FontWeight.Bold, color = textCol)
+                                            }
+                                            Row {
+                                                (1..5).forEach { star ->
+                                                    Icon(
+                                                        imageVector = Icons.Default.Star,
+                                                        contentDescription = null,
+                                                        tint = if (star <= item.rating) Color(0xFFFFCC00) else Color.White.copy(0.15f),
+                                                        modifier = Modifier.size(10.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Text(text = item.text, fontSize = 9.sp, color = subTextCol, lineHeight = 12.sp)
+
+                                        if (state.isAdminMode) {
+                                            Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.CenterEnd) {
+                                                TextButton(
+                                                    onClick = { vModel.deleteFeedback(item.id) },
+                                                    colors = ButtonDefaults.textButtonColors(contentColor = Color(0xFFFF5252))
+                                                ) {
+                                                    Text("MODERATE DELETE", fontSize = 8.sp, fontWeight = FontWeight.Bold)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 6. RECOVERY SECURITY TIPS CARD
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "RECOVERY & TRUST TIPS",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textCol,
+                        letterSpacing = 1.sp
+                    )
+
+                    val tips = state.recoveryTips
+                    if (tips.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Tips index is empty.", fontSize = 10.sp, color = subTextCol)
+                        }
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            tips.take(4).forEach { tip ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                        .padding(14.dp)
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .background(Color(0xFF34C759).copy(0.15f), RoundedCornerShape(4.dp))
+                                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                            ) {
+                                                Text(tip.category.uppercase(), fontSize = 7.5.sp, color = Color(0xFF34C759), fontWeight = FontWeight.Bold)
+                                            }
+
+                                            if (state.isAdminMode) {
+                                                IconButton(
+                                                    onClick = { vModel.deleteRecoveryTip(tip.id) },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete Tip", tint = Color(0xFFFF5252), modifier = Modifier.size(12.dp))
+                                                }
+                                            }
+                                        }
+
+                                        Text(text = tip.title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
+                                        Text(text = tip.content, fontSize = 9.sp, color = subTextCol, lineHeight = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 7. LATEST UPDATES & ANNOUNCEMENTS
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "LATEST OFFICIAL UPDATES",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textCol,
+                        letterSpacing = 1.sp
+                    )
+
+                    val updates = state.systemUpdates
+                    if (updates.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("Announcements synced but empty.", fontSize = 10.sp, color = subTextCol)
+                        }
+                    } else {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            updates.forEach { post ->
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .liquidGlass(intensity = state.glassIntensity, cornerRadius = 14.dp)
+                                        .padding(14.dp)
+                                ) {
+                                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(text = post.title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
+                                            if (state.isAdminMode) {
+                                                IconButton(
+                                                    onClick = { vModel.deleteSystemUpdate(post.id, context) },
+                                                    modifier = Modifier.size(24.dp)
+                                                ) {
+                                                    Icon(imageVector = Icons.Default.Delete, contentDescription = "Delete Update", tint = Color(0xFFFF5252), modifier = Modifier.size(12.dp))
+                                                }
+                                            }
+                                        }
+                                        Text(text = post.description, fontSize = 9.sp, color = subTextCol, lineHeight = 12.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 8. HELP & SUPPORT CENTER DIRECTORY
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        text = "SUPPORT CENTER CHANNELS",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = textCol,
+                        letterSpacing = 1.sp
+                    )
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .liquidGlass(intensity = state.glassIntensity, cornerRadius = 18.dp)
+                            .padding(16.dp)
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Official Tutorials & Urgent Support Links", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
+                            Text(
+                                "Join the verified priority recovery unban networks where real administrators guide thousands of players and process community requests.",
+                                fontSize = 9.sp,
+                                color = subTextCol,
+                                lineHeight = 13.sp
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Button(
+                                    onClick = { 
+                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://youtube.com/@reclaimaccounts"))
+                                        context.startActivity(intent)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF0000), contentColor = Color.White),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f).height(36.dp)
+                                ) {
+                                    Text("YouTube Support", fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                                Button(
+                                    onClick = { 
+                                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse("https://t.me/reclaimunban"))
+                                        context.startActivity(intent)
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0088CC), contentColor = Color.White),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f).height(36.dp)
+                                ) {
+                                    Text("Telegram Help", fontSize = 9.5.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 10. AI SPECIALIST FALLBACK VISIBLE CARD
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .liquidGlass(intensity = state.glassIntensity, cornerRadius = 18.dp)
+                        .padding(16.dp)
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(imageVector = Icons.Default.LibraryBooks, contentDescription = null, tint = Color(0xFF0A84FF), modifier = Modifier.size(18.dp))
+                            Text(
+                                text = "AI DIAGNOSTIC ARCHIVE & RECOVERY HISTORY",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Black,
+                                color = textCol
+                            )
+                        }
+
+                        Text(
+                            text = "To keep your unban cases secure, our advanced Gemini agent is trained on thousands of official device credentials check records and app store guidelines. This archive establishes tailored appeal drafts for linked emails of target accounts.",
+                            fontSize = 9.sp,
+                            color = subTextCol,
+                            lineHeight = 12.sp
+                        )
+
+                        Button(
+                            onClick = { vModel.toggleAiChatDialog(true) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A84FF), contentColor = Color.White),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth().height(38.dp)
+                        ) {
+                            Text("Launch AI Advisor Session", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            HorizontalDivider(color = cardBorderCol)
+                            Text("Recent AI App Store Check History:", fontSize = 8.sp, fontWeight = FontWeight.Bold, color = subTextCol)
+                            state.recoveryHistory.take(2).forEach { log ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(text = "Target ID: ${log.targetUid} (${log.targetName})", fontSize = 8.sp, color = subTextCol)
+                                    Text(
+                                        text = log.status,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (log.status == "COMPLETED") Color(0xFF34C759) else Color(0xFFFF5252)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            item { Spacer(modifier = Modifier.height(100.dp)) }
+        }
+        }
+
+        FloatingActionButton(
+            onClick = { vModel.toggleAiChatDialog(true) },
+            containerColor = Color(0xFF0B1424),
+            contentColor = Color.White,
+            shape = CircleShape,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(bottom = 92.dp, end = 20.dp)
+                .size(56.dp)
+                .bevelGlow(glowColor = Color(4286331629), cornerRadius = 28.dp)
+        ) {
+            Icon(imageVector = Icons.Default.Chat, contentDescription = "AI Specialist Dialog", modifier = Modifier.size(24.dp), tint = Color(4286331629))
+        }
+    }
+}
+
+// Legacy HomeScreen renamed to avoid conflicts and keep compiling
+@Composable
+fun LegacyHomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val textCol = if (state.isDarkTheme) Color.White else Color(0xFF0F172A)
     val subTextCol = if (state.isDarkTheme) Color.White.copy(0.8f) else Color(0xFF0F172A).copy(0.8f)
@@ -2108,7 +3750,7 @@ fun HomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                         textAlign = TextAlign.Center
                     )
 
-                    HorizontalDivider(color = Color.White.copy(0.08f))
+                    HorizontalDivider(color = textCol.copy(0.08f))
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -2181,7 +3823,7 @@ fun HomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                                 text = if (state.currentRecoveryScore >= 10f) "MAX SCORE REACHED" else "INVEST CREDITS",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Black,
-                                color = if (state.currentRecoveryScore >= 10f) textCol.copy(0.3f) else Color.Black
+                                color = if (state.currentRecoveryScore >= 10f) Color.White.copy(0.3f) else Color.Black
                             )
                         }
                     }
@@ -2206,7 +3848,7 @@ fun HomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                             Text("GUEST ACCESS RESTRICTED", fontSize = 13.sp, fontWeight = FontWeight.Black, color = textCol)
                             Text("As a guest, you can browse reports and profiles but cannot execute secure bypass handshakes or spend credits.\n\nRegister/Sign In with a Google or Email profile to get 100 free credits and unlock all recovery tools.", fontSize = 11.sp, color = subTextCol, textAlign = TextAlign.Center, lineHeight = 15.sp)
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                OutlinedButton(onClick = { showBoostGuestBlock = false }, modifier = Modifier.weight(1f).height(40.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, textCol.copy(0.12f))) {
+                                OutlinedButton(onClick = { showBoostGuestBlock = false }, modifier = Modifier.weight(1f).height(40.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Color.White.copy(0.12f))) {
                                     Text("CLOSE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textCol)
                                 }
                                 Button(onClick = {
@@ -2239,29 +3881,29 @@ fun HomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                             CustomCreditLogo(size = 40.dp)
                             Text("CONFIRM SECURITY BOOST", fontSize = 14.sp, fontWeight = FontWeight.Black, color = textCol)
                             Column(
-                                modifier = Modifier.fillMaxWidth().background(textCol.copy(0.04f), RoundedCornerShape(12.dp)).padding(12.dp),
+                                modifier = Modifier.fillMaxWidth().background(Color.White.copy(0.04f), RoundedCornerShape(12.dp)).padding(12.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Cost:", fontSize = 11.sp, color = subTextCol)
-                                    Text("25 Credits", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF9500))
+                                    Text("${state.costRecoveryScoreBoost} Credits", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF9500))
                                 }
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Current Balance:", fontSize = 11.sp, color = subTextCol)
                                     Text("${state.userCredits} Credits", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
                                 }
                                 androidx.compose.material3.HorizontalDivider(color = textCol.copy(0.08f))
-                                val postBalance = (state.userCredits - 25).coerceAtLeast(0)
+                                val postBalance = (state.userCredits - state.costRecoveryScoreBoost).coerceAtLeast(0)
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                     Text("Remaining Balance:", fontSize = 11.sp, color = subTextCol)
                                     Text("$postBalance Credits", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF34C759))
                                 }
                             }
-                            if (state.userCredits < 25 && !state.isUnlimitedCredits) {
+                            if (state.userCredits < state.costRecoveryScoreBoost && !state.isUnlimitedCredits) {
                                 Text("Insufficient balance! Please open the Credit Center to claim rewards or watch ads.", fontSize = 11.sp, color = Color(0xFFFF5252), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                OutlinedButton(onClick = { showBoostConfirmation = false }, modifier = Modifier.weight(1f).height(40.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, textCol.copy(0.12f))) {
+                                OutlinedButton(onClick = { showBoostConfirmation = false }, modifier = Modifier.weight(1f).height(40.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Color.White.copy(0.12f))) {
                                     Text("CANCEL", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textCol)
                                 }
                                 Button(
@@ -2441,9 +4083,9 @@ fun HomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                                 }
                             }
                         },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A84FF)),
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC107)),
                         shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier.fillMaxWidth().bevelGlow(glowColor = Color(0xFFFFC107), cornerRadius = 10.dp)
                     ) {
                         Text(
                             text = if (isCheckingAiBoard) "ANALYZING..." else "LAUNCH AI DIAGNOSTIC",
@@ -2514,7 +4156,7 @@ fun HomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                         Triple("WhatsApp Support", "https://chat.whatsapp.com/FFUy9FCSnqiHOVwnrz5kF5?s=cl&p=a&mlu=1", Color(0xFF25D366)),
                         Triple("Telegram Channel", "https://t.me/pubgunban2025", Color(0xFF0088CC)),
                         Triple("TikTok Official", "https://www.tiktok.com/@oshaq.playz.yt?_r=1&_t=ZS-978w8J3IUDq", Color(0xFFFE2C55)),
-                        Triple("YouTube Tutorials", "https://www.youtube.com/@oshaqplayz", Color(0xFFFF0000))
+                        Triple("YouTube Tutorials", "https://youtube.com/@oshaqplayzislive", Color(0xFFFF0000))
                     )
 
                     Column(
@@ -2615,9 +4257,18 @@ fun HomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                                 .clip(CircleShape)
                                 .bounceClick { vModel.changeTab(NavigationTab.PROFILE) }
                         ) {
-                            if (!state.profileLogoUri.isNullOrEmpty()) {
+                            val firebasePhotoUrl = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.photoUrl?.toString()
+                            val avatarUrlModel = if (!state.profileLogoUri.isNullOrEmpty()) {
+                                state.profileLogoUri
+                            } else if (!firebasePhotoUrl.isNullOrEmpty()) {
+                                firebasePhotoUrl
+                            } else {
+                                null
+                            }
+
+                            if (!avatarUrlModel.isNullOrEmpty()) {
                                 SubcomposeAsyncImage(
-                                    model = state.profileLogoUri,
+                                    model = avatarUrlModel,
                                     contentDescription = "Custom User Avatar",
                                     modifier = Modifier.fillMaxSize(),
                                     contentScale = ContentScale.Crop,
@@ -2637,6 +4288,20 @@ fun HomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                                         )
                                     }
                                 )
+                            } else if (state.isLoggedIn && !state.isGuest && !state.googleAccountName.isNullOrBlank()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color(0xFF0A84FF)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = state.googleAccountName.first().uppercase(),
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.Black,
+                                        color = Color(0xFF0F172A)
+                                    )
+                                }
                             } else {
                                 Image(
                                     imageVector = Icons.Default.Person,
@@ -2753,7 +4418,7 @@ fun HomeScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                     Text(
                         text = "PUBG-Style Verified Secure Bypass Signature",
                         fontSize = 9.5.sp,
-                        color = Color.White.copy(0.7f),
+                        color = textCol.copy(0.7f),
                         fontWeight = FontWeight.Medium
                     )
                 }
@@ -4012,27 +5677,27 @@ fun UsersFeedbackBackgroundSection(state: ReclaimUiState) {
             )
         }
 
-        val feedbacks = listOf(
-            "VIP_Deluxe" to "Successfully unlocked my main after 3 months of waiting. Fast bypass layer execution.",
-            "Oshaq_Playz" to "The AI specialist recommended great payload attachments for my email bypass.",
-            "AlphaWolf99" to "Best restoration tool. Secure protocol connects flawlessly to remote caches!"
-        )
+        val feedbacks = state.userFeedbackList.take(5)
 
-        feedbacks.forEach { (user, comment) ->
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "@$user",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = Color(0xFF0A84FF)
-                )
-                Text(
-                    text = comment,
-                    fontSize = 9.sp,
-                    color = subTextCol,
-                    lineHeight = 13.sp
-                )
-                HorizontalDivider(color = if (state.isDarkTheme) Color.White.copy(0.08f) else Color.Black.copy(0.08f), modifier = Modifier.padding(top = 4.dp))
+        if (feedbacks.isEmpty()) {
+            Text("No user feedback right now.", fontSize = 9.sp, color = subTextCol)
+        } else {
+            feedbacks.forEach { feedback ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "@${feedback.email.substringBefore('@')}",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF0A84FF)
+                    )
+                    Text(
+                        text = feedback.text,
+                        fontSize = 9.sp,
+                        color = subTextCol,
+                        lineHeight = 13.sp
+                    )
+                    HorizontalDivider(color = if (state.isDarkTheme) Color.White.copy(0.08f) else Color.Black.copy(0.08f), modifier = Modifier.padding(top = 4.dp))
+                }
             }
         }
     }
@@ -4079,15 +5744,19 @@ fun RecoveryScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
 
         item {
             RecoveryOptionCard(
-                title = "Secure Email Layer Bypass",
-                desc = "Redirect target verification links to virtual encrypted sandboxes.",
+                title = "Secure Email Layer",
+                desc = "Redirect target verification links to virtual encrypted.",
                 status = "REQUIRES 150 CREDITS",
+                realPriceInfo = "300 real price CREDITS (50% off)",
                 isAvailable = true,
                 intensity = state.glassIntensity,
                 onLaunch = { 
                     if (state.isGuest) {
                         vModel.showToast("Guest Users cannot access this feature.", "ACCESS DENIED")
+                    } else if (!vModel.canUseReclaimEngine()) {
+                        vModel.showToast("Limit reached! Try again tomorrow.", "LIMIT EXCEEDED")
                     } else if (!showUnbanEngineDialog && vModel.spendCredits(150)) {
+                        vModel.recordReclaimEngineUse()
                         selectedRecoveryTitle = "Direct Email Layer Recovery"
                         showUnbanEngineDialog = true
                     }
@@ -4097,15 +5766,19 @@ fun RecoveryScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
 
         item {
             RecoveryOptionCard(
-                title = "In-Game Layer Bypass",
-                desc = "Spoof HWID metadata directly via secure hypervisor firmware injection.",
-                status = "REQUIRES 1500 CREDITS",
+                title = "In-Game Layer",
+                desc = "Spoof HWID metadata directly via secure hypervisor firmware injection.\nWARNING: This method some devices not working pop-up showing. Success rate 10% to 0.01% up and down showing .",
+                status = "REQUIRES 2500 CREDITS",
+                realPriceInfo = "5000 real price CREDITS (50% off)",
                 isAvailable = true,
                 intensity = state.glassIntensity,
                 onLaunch = { 
                     if (state.isGuest) {
                         vModel.showToast("Guest Users cannot access this feature.", "ACCESS DENIED")
-                    } else if (!showUnbanEngineDialog && vModel.spendCredits(1500)) {
+                    } else if (!vModel.canUseReclaimEngine()) {
+                        vModel.showToast("Limit reached! Try again tomorrow.", "LIMIT EXCEEDED")
+                    } else if (!showUnbanEngineDialog && vModel.spendCredits(2500)) {
+                        vModel.recordReclaimEngineUse()
                         selectedRecoveryTitle = "In-Game Recovery Authentication"
                         showUnbanEngineDialog = true
                     }
@@ -4139,164 +5812,6 @@ fun RecoveryScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
 
         item {
             Spacer(modifier = Modifier.height(10.dp))
-            Text(
-                text = "RECOVERY HISTORY LOGS (SIMULATIONS)",
-                fontSize = 11.sp,
-                fontWeight = FontWeight.Bold,
-                color = textCol,
-                letterSpacing = 1.sp
-            )
-        }
-
-        if (state.recoveryHistory.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 12.dp)
-                        .liquidGlass(intensity = state.glassIntensity, cornerRadius = 16.dp)
-                        .padding(24.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.History,
-                            contentDescription = "No History",
-                            tint = textCol.copy(alpha = 0.35f),
-                            modifier = Modifier.size(36.dp)
-                        )
-                        Text(
-                            text = "No recorded recovery traces in active cache.",
-                            fontSize = 10.sp,
-                            color = textCol.copy(alpha = 0.5f),
-                            fontWeight = FontWeight.Medium
-                        )
-                    }
-                }
-            }
-        } else {
-            items(state.recoveryHistory) { logItem ->
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 4.dp)
-                        .liquidGlass(
-                            intensity = state.glassIntensity,
-                            cornerRadius = 18.dp,
-                            borderGlow = if (logItem.status == "COMPLETED") Color(0x3300FF87) else Color(0x22FFFFFF)
-                        )
-                        .padding(16.dp)
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.History,
-                                    contentDescription = null,
-                                    tint = if (logItem.status == "COMPLETED") Color(0xFF00FF87) else Color(0xFFFF5252),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Text(
-                                    text = logItem.id,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Black,
-                                    color = textCol,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-                            
-                            // Status badge
-                            val badgeColor = if (logItem.status == "COMPLETED") Color(0xFF00FF87) else Color(0xFFFF5252)
-                            Box(
-                                modifier = Modifier
-                                    .background(badgeColor.copy(0.12f), RoundedCornerShape(4.dp))
-                                    .border(0.5.dp, badgeColor.copy(0.4f), RoundedCornerShape(4.dp))
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            ) {
-                                Text(
-                                    text = logItem.status,
-                                    fontSize = 8.sp,
-                                    color = badgeColor,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-
-                        HorizontalDivider(color = textCol.copy(alpha = 0.06f))
-
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "TARGET NICKNAME",
-                                    fontSize = 8.sp,
-                                    color = textCol.copy(0.45f),
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "SECURE UID",
-                                    fontSize = 8.sp,
-                                    color = textCol.copy(0.45f),
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "@" + logItem.targetName,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = textCol
-                                )
-                                Text(
-                                    text = logItem.targetUid,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace,
-                                    color = if (state.isDarkTheme) Color(0xFF0A84FF) else Color(0xFF0284C7)
-                                )
-                            }
-                        }
-
-                        // Recovery Technique / Channel Type
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(textCol.copy(0.02f), RoundedCornerShape(8.dp))
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = logItem.recoveryType,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = textCol.copy(0.75f)
-                            )
-                            Text(
-                                text = logItem.timestamp,
-                                fontSize = 8.sp,
-                                color = textCol.copy(0.4f)
-                            )
-                        }
-                    }
-                }
-            }
         }
 
         item {
@@ -4494,7 +6009,7 @@ fun UnbanEngineGatewayDialog(
                                 .background(Color(0xFFFF9500), CircleShape)
                         )
                         Text(
-                            text = "UNBAN ENGINE CORE GATEWAY",
+                            text = "RECLAIM ENGINE CORE GATEWAY",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Black,
                             color = Color(0xFFFF9500),
@@ -4522,7 +6037,7 @@ fun UnbanEngineGatewayDialog(
                             color = textCol
                         )
                         Text(
-                            text = "You are launching the custom unban engine trees designed for: **$recoveryType**. Align with security bypass channels immediately by picking an operational gateway below:",
+                            text = "You are launching the custom reclaim engine trees designed for: **$recoveryType**. Align with security bypass channels immediately by picking an operational gateway below:",
                             fontSize = 10.sp,
                             color = subTextCol,
                             lineHeight = 14.sp
@@ -4624,9 +6139,9 @@ fun UnbanEngineGatewayDialog(
                             },
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = Color.White.copy(0.04f),
-                                contentColor = textCol
+                                contentColor = Color.White
                             ),
-                            border = BorderStroke(1.dp, textCol.copy(0.12f)),
+                            border = BorderStroke(1.dp, Color.White.copy(0.12f)),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.fillMaxWidth().height(40.dp)
                         ) {
@@ -4657,7 +6172,7 @@ fun UnbanEngineGatewayDialog(
                                         Text("GUEST ACCESS RESTRICTED", fontSize = 13.sp, fontWeight = FontWeight.Black, color = textCol)
                                         Text("As a guest, you can browse reports and profiles but cannot execute secure bypass handshakes or spend credits.\n\nRegister/Sign In with a Google or Email profile to get 100 free credits and unlock all recovery tools.", fontSize = 11.sp, color = subTextCol, textAlign = TextAlign.Center, lineHeight = 15.sp)
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                            OutlinedButton(onClick = { showGuestBlockDialog = false }, modifier = Modifier.weight(1f).height(40.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, textCol.copy(0.12f))) {
+                                            OutlinedButton(onClick = { showGuestBlockDialog = false }, modifier = Modifier.weight(1f).height(40.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Color.White.copy(0.12f))) {
                                                 Text("CLOSE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textCol)
                                             }
                                             Button(onClick = {
@@ -4690,29 +6205,29 @@ fun UnbanEngineGatewayDialog(
                                         CustomCreditLogo(size = 40.dp)
                                         Text("CONFIRM TRANSACTION", fontSize = 14.sp, fontWeight = FontWeight.Black, color = textCol)
                                         Column(
-                                            modifier = Modifier.fillMaxWidth().background(textCol.copy(0.04f), RoundedCornerShape(12.dp)).padding(12.dp),
+                                            modifier = Modifier.fillMaxWidth().background(Color.White.copy(0.04f), RoundedCornerShape(12.dp)).padding(12.dp),
                                             verticalArrangement = Arrangement.spacedBy(8.dp)
                                         ) {
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                                 Text("Cost:", fontSize = 11.sp, color = subTextCol)
-                                                Text("25 Credits", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF9500))
+                                                Text("${state.costCreateNewTicket} Credits", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFF9500))
                                             }
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                                 Text("Current Balance:", fontSize = 11.sp, color = subTextCol)
                                                 Text("${state.userCredits} Credits", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
                                             }
                                             androidx.compose.material3.HorizontalDivider(color = textCol.copy(0.08f))
-                                            val postBalance = (state.userCredits - 25).coerceAtLeast(0)
+                                            val postBalance = (state.userCredits - state.costCreateNewTicket).coerceAtLeast(0)
                                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                                 Text("Remaining Balance:", fontSize = 11.sp, color = subTextCol)
                                                 Text("$postBalance Credits", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color(0xFF34C759))
                                             }
                                         }
-                                        if (state.userCredits < 25 && !state.isUnlimitedCredits) {
+                                        if (state.userCredits < state.costCreateNewTicket && !state.isUnlimitedCredits) {
                                             Text("Insufficient balance! Please open the Credit Center to claim rewards or watch ads.", fontSize = 11.sp, color = Color(0xFFFF5252), textAlign = TextAlign.Center, fontWeight = FontWeight.Bold)
                                         }
                                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                                            OutlinedButton(onClick = { showDeductionConfirmDialog = false }, modifier = Modifier.weight(1f).height(40.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, textCol.copy(0.12f))) {
+                                            OutlinedButton(onClick = { showDeductionConfirmDialog = false }, modifier = Modifier.weight(1f).height(40.dp), shape = RoundedCornerShape(10.dp), border = BorderStroke(1.dp, Color.White.copy(0.12f))) {
                                                 Text("CANCEL", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textCol)
                                             }
                                             Button(
@@ -4799,6 +6314,7 @@ fun RecoveryOptionCard(
     title: String,
     desc: String,
     status: String,
+    realPriceInfo: String? = null,
     isAvailable: Boolean,
     intensity: GlassIntensity,
     onLaunch: () -> Unit
@@ -4827,7 +6343,11 @@ fun RecoveryOptionCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(
+                    modifier = Modifier.weight(1f).padding(end = 8.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp), 
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Icon(
                         imageVector = if (isAvailable) Icons.Default.VerifiedUser else Icons.Default.Lock,
                         contentDescription = "Availability Status icon",
@@ -4838,7 +6358,9 @@ fun RecoveryOptionCard(
                         text = title,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
-                        color = textCol
+                        color = textCol,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -4858,6 +6380,15 @@ fun RecoveryOptionCard(
                 }
             }
 
+            if (realPriceInfo != null) {
+                Text(
+                    text = realPriceInfo,
+                    fontSize = 10.sp,
+                    color = Color.Green,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
             Text(
                 text = desc,
                 fontSize = 11.sp,
@@ -4869,14 +6400,14 @@ fun RecoveryOptionCard(
                     onClick = onLaunch,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(36.dp)
-                        .testTag("submit_button"),
+                        .height(38.dp)
+                        .testTag("submit_button")
+                        .bevelGlow(glowColor = Color(0xFFFFC107), cornerRadius = 10.dp),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF0A84FF).copy(0.2f),
-                        contentColor = Color(0xFF0A84FF)
+                        containerColor = Color(0xFFFFC107),
+                        contentColor = Color.Black
                     ),
                     shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, Color(0xFF0A84FF).copy(0.5f)),
                     contentPadding = PaddingValues(0.dp)
                 ) {
                     Row(
@@ -4884,7 +6415,7 @@ fun RecoveryOptionCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "LAUNCH UNBAN ENGINE",
+                            text = "LAUNCH RECLAIM ENGINE",
                             fontSize = 10.sp,
                             fontWeight = FontWeight.ExtraBold,
                             letterSpacing = 1.sp
@@ -4995,151 +6526,161 @@ fun ToolsScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
             }
         }
 
-        item {
-            BanSearchSystemCard(vModel, state)
+        val query = state.searchQueries.lowercase()
+
+        if (query.isEmpty() || "ban search system".contains(query) || "database".contains(query)) {
+            item {
+                BanSearchSystemCard(vModel, state)
+            }
         }
 
-        item {
-            CommunityReportsCard(vModel, state)
+        if (query.isEmpty() || "live community reports".contains(query)) {
+            item {
+                CommunityReportsCard(vModel, state)
+            }
         }
 
-        item {
-            Box(
-                modifier = Modifier.fillMaxWidth()
-            ) {
+        if (query.isEmpty() || "new case enrollment unit".contains(query) || "injector".contains(query)) {
+            item {
                 Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .liquidGlass(intensity = state.glassIntensity, cornerRadius = 18.dp)
-                )
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        text = "NEW CASE ENROLLMENT UNIT",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF0A84FF),
-                        letterSpacing = 1.sp
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .liquidGlass(intensity = state.glassIntensity, cornerRadius = 18.dp)
                     )
-                    Text(
-                        text = "Incorporate custom authentication credentials or PUBG unban leg ID directly below.",
-                        fontSize = 11.sp,
-                        color = if (state.isDarkTheme) Color.White.copy(0.7f) else Color.Black.copy(0.7f)
-                    )
-
-                    Row(
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .background(if (state.isDarkTheme) Color.White.copy(0.06f) else Color.Black.copy(0.06f), RoundedCornerShape(10.dp))
-                            .border(0.5.dp, if (state.isDarkTheme) Color.White.copy(0.12f) else Color.Black.copy(0.12f), RoundedCornerShape(10.dp))
-                            .padding(12.dp)
+                            .padding(16.dp)
                     ) {
-                        BasicTextField(
-                            value = logText,
-                            onValueChange = { logText = it },
-                            textStyle = TextStyle(color = if (state.isDarkTheme) Color.White else Color.Black, fontSize = 12.sp),
-                            modifier = Modifier.weight(1f),
-                            decorationBox = { innerTextField ->
-                                if (logText.isEmpty()) {
-                                    Text(
-                                        text = "Enter Case Name or Log ID (PUBG Account #229341",
-                                        color = if (state.isDarkTheme) Color.White.copy(0.4f) else Color.Black.copy(0.4f),
-                                        fontSize = 12.sp
-                                    )
-                                }
-                                innerTextField()
-                            }
+                        Text(
+                            text = "NEW CASE ENROLLMENT UNIT",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF0A84FF),
+                            letterSpacing = 1.sp
                         )
-                    }
+                        Text(
+                            text = "Incorporate custom authentication credentials or PUBG unban leg ID directly below.",
+                            fontSize = 11.sp,
+                            color = if (state.isDarkTheme) Color.White.copy(0.7f) else Color.Black.copy(0.7f)
+                        )
 
-                    Button(
-                        onClick = {
-                            if (logText.trim().isNotEmpty()) {
-                                vModel.createSupportCase(logText.trim(), "Diagnostics logs generated for unban inquiry: " + logText.trim(), context) {
-                                    logText = ""
-                                }
-                            }
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(36.dp)
-                            .testTag("submit_button"),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF0A84FF),
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(0.dp)
-                    ) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(if (state.isDarkTheme) Color.White.copy(0.06f) else Color.Black.copy(0.06f), RoundedCornerShape(10.dp))
+                                .border(0.5.dp, if (state.isDarkTheme) Color.White.copy(0.12f) else Color.Black.copy(0.12f), RoundedCornerShape(10.dp))
+                                .padding(12.dp)
                         ) {
-                            Text(
-                                text = "SUBMIT MANUAL INJECTOR +",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                letterSpacing = 1.sp
+                            BasicTextField(
+                                value = logText,
+                                onValueChange = { logText = it },
+                                textStyle = TextStyle(color = if (state.isDarkTheme) Color.White else Color.Black, fontSize = 12.sp),
+                                modifier = Modifier.weight(1f),
+                                decorationBox = { innerTextField ->
+                                    if (logText.isEmpty()) {
+                                        Text(
+                                            text = "Enter Case Name or Log ID (PUBG Account #229341",
+                                            color = if (state.isDarkTheme) Color.White.copy(0.4f) else Color.Black.copy(0.4f),
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                    innerTextField()
+                                }
                             )
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(12.dp))
+                        }
+
+                        Button(
+                            onClick = {
+                                if (logText.trim().isNotEmpty()) {
+                                    vModel.createSupportCase(logText.trim(), "Diagnostics logs generated for unban inquiry: " + logText.trim(), context) {
+                                        logText = ""
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(36.dp)
+                                .testTag("submit_button"),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF0A84FF),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "SUBMIT MANUAL INJECTOR +",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    letterSpacing = 1.sp
+                                )
+                                Icon(imageVector = Icons.Default.Add, contentDescription = "Add", modifier = Modifier.size(12.dp))
+                            }
                         }
                     }
                 }
             }
         }
 
-        item {
-            Box(
-                modifier = Modifier.fillMaxWidth()
-            ) {
+        if (query.isEmpty() || "bypass v1.4 payloads".contains(query) || "payloads".contains(query)) {
+            item {
                 Box(
-                    modifier = Modifier
-                        .matchParentSize()
-                        .liquidGlass(intensity = state.glassIntensity, cornerRadius = 18.dp)
-                )
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        text = "BYPASS V1.4 PAYLOADS",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        color = Color(0xFF34C759),
-                        letterSpacing = 1.sp
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .liquidGlass(intensity = state.glassIntensity, cornerRadius = 18.dp)
                     )
-                    Text(
-                        text = "Initialize custom payload injections directly to bypass sandbox protections locally.",
-                        fontSize = 11.sp,
-                        color = if (state.isDarkTheme) Color.White.copy(0.8f) else Color.Black.copy(0.8f)
-                    )
-                    Button(
-                        onClick = {
-                            vModel.showToast("ACCESSING BYPASS PAYLOAD SECURE SERVER", "SUCCESS")
-                            vModel.createSupportCase("Bypass Payload Log v1.4", "Initialize custom payload injections directly to bypass sandbox protections locally.", context) {}
-                        },
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(44.dp)
-                            .testTag("access_payload"),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF34C759),
-                            contentColor = Color.Black
-                        ),
-                        shape = RoundedCornerShape(10.dp)
+                            .padding(16.dp)
                     ) {
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Text(
+                            text = "BYPASS V1.4 PAYLOADS",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            color = Color(0xFF34C759),
+                            letterSpacing = 1.sp
+                        )
+                        Text(
+                            text = "Initialize custom payload injections directly to bypass sandbox protections locally.",
+                            fontSize = 11.sp,
+                            color = if (state.isDarkTheme) Color.White.copy(0.8f) else Color.Black.copy(0.8f)
+                        )
+                        Button(
+                            onClick = {
+                                vModel.showToast("ACCESSING BYPASS PAYLOAD SECURE SERVER", "SUCCESS")
+                                vModel.createSupportCase("Bypass Payload Log v1.4", "Initialize custom payload injections directly to bypass sandbox protections locally.", context) {}
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(44.dp)
+                                .testTag("access_payload"),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = Color(0xFF34C759),
+                                contentColor = Color.Black
+                            ),
+                            shape = RoundedCornerShape(10.dp)
                         ) {
-                            Text(text = "Access bypass payload", fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp)
-                            Icon(imageVector = Icons.Default.ArrowForward, contentDescription = "Launch", modifier = Modifier.size(14.dp))
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(text = "Access bypass payload", fontSize = 11.sp, fontWeight = FontWeight.Black, letterSpacing = 0.5.sp)
+                                Icon(imageVector = Icons.Default.ArrowForward, contentDescription = "Launch", modifier = Modifier.size(14.dp))
+                            }
                         }
                     }
                 }
@@ -5151,7 +6692,7 @@ fun ToolsScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                 text = "TICKET MANAGEMENT SYSTEM",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White,
+                color = textCol,
                 letterSpacing = 1.sp
             )
         }
@@ -5237,13 +6778,13 @@ fun ToolsScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                             Text(
                                 text = "Compliance Specialist Audit Queue",
                                 fontSize = 9.sp,
-                                color = Color.White.copy(0.5f)
+                                color = textCol.copy(0.5f)
                             )
                             Text(
                                 text = if (ticket.status == "resolved") "100%" else (if (ticket.status == "pending") "65%" else "15%"),
                                 fontSize = 9.sp,
                                 fontWeight = FontWeight.Bold,
-                                color = Color.White
+                                color = textCol
                             )
                         }
 
@@ -5374,7 +6915,7 @@ fun NotificationsScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                             .padding(top = 4.dp)
                             .size(10.dp)
                             .background(
-                                if (item.isUnread) Color(0xFF0A84FF) else textCol.copy(alpha = 0.2f),
+                                if (item.isUnread) Color(0xFF0A84FF) else Color.White.copy(alpha = 0.2f),
                                 CircleShape
                             )
                     )
@@ -5623,14 +7164,14 @@ fun ProfileScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                     Icon(
                         imageVector = Icons.Default.PersonOff,
                         contentDescription = "No Profile Data",
-                        tint = Color.White.copy(0.3f),
+                        tint = textCol.copy(0.3f),
                         modifier = Modifier.size(48.dp)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Profile Not Linked",
                         fontSize = 13.sp,
-                        color = Color.White.copy(0.6f)
+                        color = textCol.copy(0.6f)
                     )
                     Spacer(modifier = Modifier.height(16.dp))
                     Button(
@@ -5659,67 +7200,7 @@ fun ProfileScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
         }
 
         item {
-            SettingsPanel(title = "CORE APLET THEME STYLE") {
-                val isSystemDark = androidx.compose.foundation.isSystemInDarkTheme()
-                val currentModeText = when (state.themeMode) {
-                    AppThemeMode.LIGHT -> "LIGHT MOOD"
-                    AppThemeMode.DARK -> "AMOLED DARK"
-                    AppThemeMode.TITANIUM -> "TITANIUM GRAY"
-                    AppThemeMode.AUTO -> "SYSTEM AUTO (DEVICE)"
-                }
-                val currentModeIcon = when (state.themeMode) {
-                    AppThemeMode.LIGHT -> Icons.Default.LightMode
-                    AppThemeMode.DARK -> Icons.Default.DarkMode
-                    AppThemeMode.TITANIUM -> Icons.Default.Style
-                    AppThemeMode.AUTO -> Icons.Default.SettingsSuggest
-                }
-                
-                Button(
-                    onClick = {
-                        vModel.toggleTheme(isSystemDark)
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("toggle_theme_button"),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (state.isDarkTheme) Color.White.copy(0.08f) else Color.Black.copy(0.06f),
-                        contentColor = if (state.isDarkTheme) Color.White else Color.Black
-                    ),
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, if (state.isDarkTheme) Color.White.copy(0.12f) else Color.Black.copy(0.08f))
-                ) {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(
-                            imageVector = currentModeIcon,
-                            contentDescription = "Theme Icon",
-                            tint = if (state.isDarkTheme) Color(0xFF0A84FF) else Color(0xFF34C759),
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Text(
-                            text = "THEME MODE: $currentModeText",
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            letterSpacing = 1.sp
-                        )
-                        Spacer(modifier = Modifier.weight(1f))
-                        Text(
-                            text = "TAP TO SWITCH",
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = (if (state.isDarkTheme) Color.White else Color.Black).copy(0.5f),
-                            letterSpacing = 0.5.sp
-                        )
-                    }
-                }
-            }
-        }
-
-        item {
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(1.dp))
         }
 
 
@@ -5780,6 +7261,308 @@ fun ProfileScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
 
         item {
             DeveloperProfileCard(state = state)
+        }
+
+        item {
+            SettingsPanel(title = "SECURE COIN TRANSFER") {
+                var transferUid by remember { mutableStateOf("") }
+                var transferAmount by remember { mutableStateOf("200") }
+                var transferNote by remember { mutableStateOf("") }
+                var isTransferring by remember { mutableStateOf(false) }
+
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "Transfer credits securely via UID. Minimum 200 credits required.",
+                        fontSize = 11.sp,
+                        color = textCol.copy(0.7f)
+                    )
+                    
+                    TextField(
+                        value = transferUid,
+                        onValueChange = { transferUid = it },
+                        placeholder = { Text("Enter Target Player UID") },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = TextFieldDefaults.colors(
+                            unfocusedContainerColor = Color.White.copy(0.05f),
+                            focusedContainerColor = Color.White.copy(0.08f),
+                            unfocusedIndicatorColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent
+                        ),
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+
+                    TextField(
+                        value = transferAmount,
+                        onValueChange = { if (it.all { char -> char.isDigit() }) transferAmount = it },
+                        placeholder = { Text("Transfer Amount (Min 200)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = TextFieldDefaults.colors(
+                            unfocusedContainerColor = Color.White.copy(0.05f),
+                            focusedContainerColor = Color.White.copy(0.08f),
+                            unfocusedIndicatorColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent
+                        ),
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+
+                    TextField(
+                        value = transferNote,
+                        onValueChange = { transferNote = it },
+                        placeholder = { Text("Optional Transfer Note") },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = TextFieldDefaults.colors(
+                            unfocusedContainerColor = Color.White.copy(0.05f),
+                            focusedContainerColor = Color.White.copy(0.08f),
+                            unfocusedIndicatorColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent
+                        ),
+                        singleLine = true,
+                        shape = RoundedCornerShape(8.dp)
+                    )
+                    
+                    Button(
+                        onClick = {
+                            val amount = transferAmount.toIntOrNull() ?: 0
+                            if (amount < 200) {
+                                vModel.showToast("Minimum 200 credits required for transfer.", "ERROR")
+                                return@Button
+                            }
+                            if (transferUid.isBlank()) {
+                                vModel.showToast("Please enter a valid User ID.", "ERROR")
+                                return@Button
+                            }
+                            isTransferring = true
+                            vModel.transferCoinsToUser(
+                                toUid = transferUid.trim(),
+                                amount = amount,
+                                note = transferNote,
+                                onSuccess = {
+                                    isTransferring = false
+                                    transferUid = ""
+                                    transferAmount = "200"
+                                    transferNote = ""
+                                    vModel.showToast("Successfully transferred $amount credits to User ${transferUid}.", "TRANSFER COMPLETE")
+                                },
+                                onError = { errorMsg ->
+                                    isTransferring = false
+                                    vModel.showToast(errorMsg, "TRANSFER FAILED")
+                                }
+                            )
+                        },
+                        enabled = !isTransferring && !state.isGuest,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(4286331629).copy(alpha = 0.2f),
+                            contentColor = Color(4286331629)
+                        ),
+                        modifier = Modifier.fillMaxWidth().height(42.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Color(4286331629).copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = if (isTransferring) "PROCESSING TRANSACTION..." else "INITIATE COIN TRANSFER",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.5.sp
+                        )
+                    }
+                }
+            }
+        }
+
+        item {
+            SettingsPanel(title = "REFERRAL & AFFILIATES SYSTEM") {
+                var inputReferralCode by remember { mutableStateOf("") }
+                var isApplyingCode by remember { mutableStateOf(false) }
+
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    // Own referral code display
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = Color.White.copy(0.02f)),
+                        border = BorderStroke(0.5.dp, Color.White.copy(0.1f)),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = "SHARE YOUR REFERRAL CODE",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF34C759)
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val displayCode = state.userReferralCode.ifEmpty {
+                                    val fallbackCode = "REC" + (1000..9999).random().toString()
+                                    vModel.setFallbackReferralCode(fallbackCode)
+                                    fallbackCode
+                                }
+                                Text(
+                                    text = displayCode,
+                                    fontSize = 18.sp,
+                                    fontWeight = FontWeight.Black,
+                                    color = textCol,
+                                    letterSpacing = 1.sp
+                                )
+                                val clipboardManager = androidx.compose.ui.platform.LocalClipboardManager.current
+                                Button(
+                                    onClick = {
+                                        clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(displayCode))
+                                        vModel.showToast("Referral code copied!", "SUCCESS")
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFFC107).copy(alpha = 0.15f)),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                    modifier = Modifier.height(28.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("COPY", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFFC107))
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = "You and your friends get +50 Sec. Credits for each successful registration code swap.",
+                                fontSize = 9.sp,
+                                color = textCol.copy(0.5f)
+                            )
+                        }
+                    }
+
+                    // Referrer identification
+                    if (state.hasUsedReferral || !state.referredByName.isNullOrBlank()) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF34C759).copy(alpha = 0.05f)),
+                            border = BorderStroke(0.5.dp, Color(0xFF34C759).copy(alpha = 0.3f)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp).fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "YOUR REFERRER",
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF34C759)
+                                    )
+                                    Text(
+                                        text = state.referredByName ?: "Elite Verified Referrer",
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = textCol
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .background(Color(0xFF34C759).copy(0.2f), RoundedCornerShape(4.dp))
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(
+                                        text = "+50 SECURED",
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = Color(0xFF34C759)
+                                    )
+                                }
+                            }
+                        }
+                    } else if (!state.isGuest) {
+                        // User can enter referral code
+                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "WERE YOU REFERRED? ENTER CODE:",
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = textCol.copy(0.6f)
+                            )
+                            
+                            TextField(
+                                value = inputReferralCode,
+                                onValueChange = { inputReferralCode = it.uppercase().take(6) },
+                                placeholder = { Text("Friend's Referral Code", fontSize = 11.sp, color = textCol.copy(0.35f)) },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = TextFieldDefaults.colors(
+                                    unfocusedContainerColor = Color.White.copy(0.04f),
+                                    focusedContainerColor = Color.White.copy(0.08f),
+                                    unfocusedTextColor = textCol,
+                                    focusedTextColor = textCol,
+                                    unfocusedIndicatorColor = Color.Transparent,
+                                    focusedIndicatorColor = Color.Transparent
+                                ),
+                                textStyle = TextStyle(fontSize = 12.sp, fontWeight = FontWeight.Bold),
+                                singleLine = true,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+
+                            Button(
+                                onClick = {
+                                    if (inputReferralCode.trim().length != 6) {
+                                        vModel.showToast("Please enter a valid 6-char referral key.", "ERROR")
+                                        return@Button
+                                    }
+                                    isApplyingCode = true
+                                    vModel.applyReferralCode(
+                                        code = inputReferralCode.trim(),
+                                        onSuccess = {
+                                            isApplyingCode = false
+                                            inputReferralCode = ""
+                                            vModel.showToast("Referral code registered successfully! +50 Credits.", "SUCCESS")
+                                        },
+                                        onError = { errorMsg ->
+                                            isApplyingCode = false
+                                            vModel.showToast(errorMsg, "ERROR")
+                                        }
+                                    )
+                                },
+                                enabled = !isApplyingCode && inputReferralCode.isNotBlank(),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF34C759),
+                                    contentColor = Color.Black
+                                ),
+                                modifier = Modifier.fillMaxWidth().height(38.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text(
+                                    text = if (isApplyingCode) "RECLAIMING REFERRER KEY..." else "REGISTER REFERRAL ACCESS",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Black
+                                )
+                            }
+                        }
+                    }
+
+                    // Referred Users by this current user list
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = "TOTAL REFERRED USERS: ${state.totalReferrals}",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = textCol.copy(0.5f)
+                        )
+                        if (state.referredUsers.isNotEmpty()) {
+                            Text(
+                                text = "Successfully Registered Friends:\n• ${state.referredUsers.joinToString("\n• ")}",
+                                fontSize = 10.sp,
+                                color = textCol.copy(0.8f),
+                                lineHeight = 14.sp
+                            )
+                        } else {
+                            Text(
+                                text = "No registration referrals swapped yet. Invite friends of target accounts online to earn bonuses!",
+                                fontSize = 9.sp,
+                                color = textCol.copy(0.35f),
+                                lineHeight = 12.sp
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         item {
@@ -5851,7 +7634,7 @@ fun ProfileScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                         }
                     }
 
-                    HorizontalDivider(color = Color.White.copy(0.08f))
+                    HorizontalDivider(color = textCol.copy(0.08f))
 
                     CustomGlassInput(
                         label = "Player Character Name",
@@ -5934,7 +7717,7 @@ fun ProfileScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                         }
                     }
 
-                    HorizontalDivider(color = Color.White.copy(0.08f))
+                    HorizontalDivider(color = textCol.copy(0.08f))
 
                     if (type == "Help Center") {
                         LazyColumn(
@@ -5988,7 +7771,7 @@ fun ProfileScreen(vModel: ReclaimViewModel, state: ReclaimUiState) {
                                 .heightIn(max = 240.dp)
                         ) {
                             val suggestions = listOf(
-                                "Oshaq_Playz" to "Suggest adding telemetry graph speed scales directly.",
+                                "Restoration_Expert" to "Suggest adding telemetry graph speed scales directly.",
                                 "PUBG_Master" to "Need a custom file backup export feature.",
                                 "VIP_Deluxe" to "Add dynamic chat logs backup tracker to standard tools."
                             )
@@ -6224,7 +8007,7 @@ fun ProfileStatCard(label: String, value: String, color: Color, modifier: Modifi
                 text = label.uppercase(),
                 fontSize = 7.3.sp,
                 fontWeight = FontWeight.Bold,
-                color = Color.White.copy(0.45f)
+                color = textCol.copy(0.45f)
             )
         }
     }
@@ -6584,7 +8367,7 @@ fun SettingsPanel(title: String, content: @Composable () -> Unit) {
             text = title.uppercase(),
             fontSize = 9.sp,
             fontWeight = FontWeight.Bold,
-            color = Color.White.copy(0.5f),
+            color = textCol.copy(0.5f),
             letterSpacing = 0.5.sp
         )
         content()
@@ -6622,11 +8405,68 @@ fun SettingsToggleButton(
     }
 }
 
+@Composable
+fun ReclaimDialog(
+    onDismiss: () -> Unit,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit
+) {
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.90f))
+                .clickable(
+                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+                    indication = null
+                ) { onDismiss() },
+            contentAlignment = Alignment.Center
+        ) {
+            val scale = remember { androidx.compose.animation.core.Animatable(0.90f) }
+            val alpha = remember { androidx.compose.animation.core.Animatable(0.0f) }
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                scale.animateTo(
+                    targetValue = 1.0f,
+                    animationSpec = androidx.compose.animation.core.spring(
+                        dampingRatio = androidx.compose.animation.core.Spring.DampingRatioLowBouncy,
+                        stiffness = androidx.compose.animation.core.Spring.StiffnessMedium
+                    )
+                )
+            }
+            androidx.compose.runtime.LaunchedEffect(Unit) {
+                alpha.animateTo(
+                    targetValue = 1.0f,
+                    animationSpec = androidx.compose.animation.core.tween(200)
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .graphicsLayer(scaleX = scale.value, scaleY = scale.value, alpha = alpha.value)
+                    .clickable(enabled = false) {}
+                    .liquidGlass(intensity = GlassIntensity.ULTRA, cornerRadius = 24.dp)
+                    .padding(20.dp)
+            ) {
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    content()
+                }
+            }
+        }
+    }
+}
+
 // LIQUID BOTTOM NAVIGATION
 @Composable
 fun FloatingLiquidBottomNav(
     currentTab: NavigationTab,
     isDarkTheme: Boolean,
+    unreadCount: Int = 0,
     onTabSelected: (NavigationTab) -> Unit
 ) {
     val haptic = androidx.compose.ui.platform.LocalHapticFeedback.current
@@ -6640,14 +8480,26 @@ fun FloatingLiquidBottomNav(
 
     Box(
         modifier = Modifier
-            .padding(horizontal = 24.dp, vertical = 8.dp)
+            .widthIn(max = 500.dp)
             .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
             .height(76.dp)
     ) {
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .liquidGlass(intensity = GlassIntensity.MEDIUM, cornerRadius = 38.dp, isDarkTheme = isDarkTheme)
+                .liquidGlass(intensity = GlassIntensity.ULTRA, cornerRadius = 38.dp, isDarkTheme = true)
+                .border(
+                    1.2.dp,
+                    androidx.compose.ui.graphics.Brush.linearGradient(
+                        colors = listOf(
+                            Color.White.copy(0.18f),
+                            Color.White.copy(0.02f),
+                            Color(4286331629).copy(0.15f)
+                        )
+                    ),
+                    RoundedCornerShape(38.dp)
+                )
         )
         Box(
             modifier = Modifier.fillMaxSize(),
@@ -6662,14 +8514,10 @@ fun FloatingLiquidBottomNav(
             ) {
             items.forEach { (tab, icon) ->
                 val selected = (tab == currentTab)
-                val scale by animateFloatAsState(if (selected) 1.2f else 1.0f, label = "tab_sc", animationSpec = spring(dampingRatio = 0.6f, stiffness = Spring.StiffnessLow))
-                val alpha by animateFloatAsState(if (selected) 1.0f else 0.4f, label = "tab_al")
-                val unselectedColor = if (isDarkTheme) Color.White else Color.Black
-                val glowColor = if (selected) {
-                    if (isDarkTheme) Color(0xFF0A84FF) else Color.Black
-                } else {
-                    unselectedColor
-                }
+                val scale by animateFloatAsState(if (selected) 1.15f else 1.0f, label = "tab_sc", animationSpec = spring(dampingRatio = 0.65f, stiffness = Spring.StiffnessLow))
+                val alpha by animateFloatAsState(if (selected) 1.0f else 0.55f, label = "tab_al")
+                val unselectedColor = Color(0xFF94A3B8)
+                val glowColor = if (selected) Color(4286331629) else unselectedColor
                 
                 Box(
                     modifier = Modifier
@@ -6689,10 +8537,10 @@ fun FloatingLiquidBottomNav(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center
                     ) {
-                        if (icon == null) {
-                            // RECOVERY Let's use the provided URL icon
-                            SubcomposeAsyncImage(
-                                model = "https://i.postimg.cc/mkBBVj4J/Picsart-26-06-17-17-00-29-294.png",
+                        Box {
+                            if (icon == null) {
+                                SubcomposeAsyncImage(
+                                model = "https://i.postimg.cc/1tms4VHV/Picsart-26-06-17-17-00-29-294.png",
                                 contentDescription = "Center Icon",
                                 modifier = Modifier
                                     .scale(scale)
@@ -6710,8 +8558,7 @@ fun FloatingLiquidBottomNav(
                                     )
                                 },
                                 colorFilter = if (selected) {
-                                    if (isDarkTheme) androidx.compose.ui.graphics.ColorFilter.tint(Color(0xFF0A84FF))
-                                    else androidx.compose.ui.graphics.ColorFilter.tint(Color.Black)
+                                    androidx.compose.ui.graphics.ColorFilter.tint(Color(4286331629))
                                 } else {
                                     androidx.compose.ui.graphics.ColorFilter.tint(unselectedColor.copy(alpha = alpha))
                                 }
@@ -6730,6 +8577,27 @@ fun FloatingLiquidBottomNav(
                                 )
                             }
                         }
+                        
+                        // Badge overlay
+                        if (tab == NavigationTab.NOTIFICATIONS && unreadCount > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .offset(x = 6.dp, y = (-4).dp)
+                                    .size(16.dp)
+                                    .clip(CircleShape)
+                                    .background(Color.Red),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = if (unreadCount > 9) "9+" else unreadCount.toString(),
+                                    color = textCol,
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    } // end Box
                         
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
@@ -6770,7 +8638,7 @@ fun StatusRow(text: String, active: Boolean) {
         Text(
             text = text,
             fontSize = 9.5.sp,
-            color = Color.White.copy(alpha = 0.8f),
+            color = textCol.copy(alpha = 0.8f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
@@ -6806,7 +8674,7 @@ fun TimeSegment(label: String, value: Int, highlight: Boolean = false) {
             text = label.uppercase(),
             fontSize = 7.sp,
             fontWeight = FontWeight.Bold,
-            color = Color.White.copy(0.4f)
+            color = textCol.copy(0.4f)
         )
     }
 }
@@ -6817,7 +8685,7 @@ fun TimeColon() {
         text = ":",
         fontSize = 15.sp,
         fontWeight = FontWeight.Bold,
-        color = Color.White.copy(0.4f),
+        color = textCol.copy(0.4f),
         modifier = Modifier.padding(bottom = 12.dp)
     )
 }
@@ -6840,49 +8708,6 @@ fun GoogleLoginAndSplashScreen(vModel: ReclaimViewModel, state: ReclaimUiState) 
     var pReason by remember { mutableStateOf(state.targetBanReason) }
     var pProfileClass by remember { mutableStateOf(state.targetProfileType) }
     var firebaseAuthCertified by remember { mutableStateOf(true) }
-    var showAccountChooser by remember { mutableStateOf(false) }
-
-    if (showAccountChooser) {
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = { showAccountChooser = false },
-            title = { Text("Choose an account", fontWeight = FontWeight.Bold, fontSize = 18.sp, color = Color.Black) },
-            text = {
-                Column(modifier = Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                    Text("to continue to RECLAIM ACCOUNTS", fontSize = 12.sp, color = Color.DarkGray, modifier = Modifier.padding(bottom = 8.dp))
-                    Row(modifier = Modifier.fillMaxWidth().bounceClick { 
-                        showAccountChooser = false
-                        vModel.updateTargetProfile(pName, pUid, pReason, pProfileClass)
-                        vModel.googleLogin(email = "oshaqplayz@gmail.com", name = "Oshaqplayz")
-                    }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(40.dp).background(Color(0xFF0A84FF), CircleShape), contentAlignment = Alignment.Center) { Text("O", color = Color.White, fontWeight = FontWeight.Bold) }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("Oshaqplayz", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.Black)
-                            Text("oshaqplayz@gmail.com", fontSize = 12.sp, color = Color.Gray)
-                        }
-                    }
-                    Divider(color = Color.LightGray.copy(0.5f), thickness = 0.5.dp)
-                    Row(modifier = Modifier.fillMaxWidth().bounceClick { 
-                        showAccountChooser = false
-                        vModel.updateTargetProfile(pName, pUid, pReason, pProfileClass)
-                        vModel.googleLogin(email = "YouTube@gmail.com", name = "YouTube Player")
-                    }.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(40.dp).background(Color.Red, CircleShape), contentAlignment = Alignment.Center) { 
-                            Text("Y", color = Color.White, fontWeight = FontWeight.Bold) 
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column {
-                            Text("YouTube Player", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = Color.DarkGray)
-                            Text("YouTube@gmail.com", fontSize = 12.sp, color = Color.Gray)
-                        }
-                    }
-                }
-            },
-            confirmButton = {},
-            containerColor = Color.White,
-            shape = RoundedCornerShape(16.dp)
-        )
-    }
 
     if (state.isSplashLoading) {
         // RENDER IMMERSIVE DIGITAL TUNNEL SPLASH Loading Screen
@@ -6907,31 +8732,46 @@ fun GoogleLoginAndSplashScreen(vModel: ReclaimViewModel, state: ReclaimUiState) 
                         initialValue = 0f,
                         targetValue = 360f,
                         animationSpec = infiniteRepeatable(
-                            animation = tween(4500, easing = LinearEasing),
+                            animation = tween(2500, easing = LinearEasing),
                             repeatMode = RepeatMode.Restart
                         ),
                         label = "spin"
                     )
                     
-                    Canvas(modifier = Modifier.size(130.dp)) {
+                    Canvas(modifier = Modifier.size(140.dp)) {
                         drawArc(
                             brush = Brush.sweepGradient(
-                                colors = listOf(Color(0xFF0A84FF), Color(0xFF34C759), Color(0xFF0582FF), Color(0xFF0A84FF))
+                                colors = listOf(Color(4286331629), Color(0xFFFFCC00), Color(0xFF0A84FF), Color(4286331629))
                             ),
                             startAngle = rotationSmooth,
                             sweepAngle = 270f,
                             useCenter = false,
-                            style = Stroke(width = 6.dp.toPx(), cap = StrokeCap.Round)
+                            style = Stroke(width = 10.dp.toPx(), cap = StrokeCap.Round)
                         )
                     }
 
-                    Image(
-                        painter = painterResource(id = R.drawable.ic_reclaim_logo),
-                        contentDescription = "PUBG Helmet Logo",
+                    SubcomposeAsyncImage(
+                        model = "https://i.postimg.cc/1tms4VHV/Picsart-26-06-17-17-00-29-294.png",
+                        contentDescription = "Loading Icon",
                         modifier = Modifier
-                            .size(90.dp)
-                            .clip(RoundedCornerShape(16.dp))
-                            .premiumShineEffect(state.isDarkTheme)
+                            .size(80.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(Color(0xFF0A84FF).copy(0.1f))
+                            .padding(12.dp)
+                            .premiumShineEffect(state.isDarkTheme),
+                        loading = {
+                            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), color = Color(0xFF0A84FF))
+                            }
+                        },
+                        error = {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "Loading Icon Fallback",
+                                tint = Color(4286331629),
+                                modifier = Modifier.fillMaxSize()
+                            )
+                        }
                     )
                 }
 
@@ -7042,17 +8882,18 @@ fun GoogleLoginAndSplashScreen(vModel: ReclaimViewModel, state: ReclaimUiState) 
             }
         }
 
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
         ) {
-            item {
-                Spacer(modifier = Modifier.height(28.dp))
-            }
-
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .padding(horizontal = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
             // Top Header Logo display
             item {
                 Column(
@@ -7060,7 +8901,7 @@ fun GoogleLoginAndSplashScreen(vModel: ReclaimViewModel, state: ReclaimUiState) 
                     verticalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     SubcomposeAsyncImage(
-                        model = "https://i.postimg.cc/HWBVnN0n/134627589-1781697303683007.jpg",
+                        model = "https://i.postimg.cc/1tms4VHV/Picsart-26-06-17-17-00-29-294.png",
                         contentDescription = "App Logo",
                         modifier = Modifier
                             .size(68.dp)
@@ -7199,7 +9040,7 @@ fun GoogleLoginAndSplashScreen(vModel: ReclaimViewModel, state: ReclaimUiState) 
                                         text = "SIGN IN WITH GOOGLE",
                                         fontSize = 11.sp,
                                         fontWeight = FontWeight.ExtraBold,
-                                        color = Color.White
+                                        color = textCol
                                     )
                                 }
                             }
@@ -7450,7 +9291,7 @@ fun GoogleLoginAndSplashScreen(vModel: ReclaimViewModel, state: ReclaimUiState) 
                                     text = "Bypass Sandbox of '${pName.ifBlank { "New Character" }}' (#${pUid.ifBlank { "000000" }})",
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold,
-                                    color = Color.White
+                                    color = textCol
                                 )
                             }
                         }
@@ -7494,7 +9335,7 @@ fun GoogleLoginAndSplashScreen(vModel: ReclaimViewModel, state: ReclaimUiState) 
                                 color = txtCol.copy(alpha = 0.5f)
                             )
 
-                            HorizontalDivider(color = Color.White.copy(0.08f))
+                            HorizontalDivider(color = textCol.copy(0.08f))
 
                             CustomGlassInput(
                                 label = "Player Character Name",
@@ -7595,7 +9436,7 @@ fun GoogleLoginAndSplashScreen(vModel: ReclaimViewModel, state: ReclaimUiState) 
                                 isDark = state.isDarkTheme
                             )
 
-                            HorizontalDivider(color = Color.White.copy(0.08f))
+                            HorizontalDivider(color = textCol.copy(0.08f))
 
                             // Custom upload profile logo module - Presets switcher
                             Text(
@@ -7757,6 +9598,7 @@ fun GoogleLoginAndSplashScreen(vModel: ReclaimViewModel, state: ReclaimUiState) 
             item {
                 Spacer(modifier = Modifier.height(28.dp))
             }
+        }
         }
 
         // Custom Google Sign-In UI removed in favor of native Google Sign In.
@@ -7927,7 +9769,7 @@ fun SMTPAndIntentEmailAppealCard(vModel: ReclaimViewModel, state: ReclaimUiState
                     Text(
                         text = smtpTaskName.uppercase(),
                         fontSize = 10.sp,
-                        color = Color.White.copy(0.8f),
+                        color = textCol.copy(0.8f),
                         textAlign = TextAlign.Center,
                         fontWeight = FontWeight.Bold
                     )
@@ -8068,7 +9910,7 @@ fun SMTPAndIntentEmailAppealCard(vModel: ReclaimViewModel, state: ReclaimUiState
                 text = emailContent,
                 fontSize = 9.sp,
                 fontFamily = FontFamily.Monospace,
-                color = Color.White.copy(0.85f),
+                color = textCol.copy(0.85f),
                 lineHeight = 12.sp
             )
         }
@@ -8108,8 +9950,8 @@ fun SMTPAndIntentEmailAppealCard(vModel: ReclaimViewModel, state: ReclaimUiState
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    Icon(imageVector = Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(14.dp), tint = Color.White)
-                    Text("SMTP SEND", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    Icon(imageVector = Icons.Default.Cloud, contentDescription = null, modifier = Modifier.size(14.dp), tint = textCol)
+                    Text("SMTP SEND", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textCol)
                 }
             }
 
@@ -8224,7 +10066,7 @@ fun DualAdvisorAiGuideCard(vModel: ReclaimViewModel, state: ReclaimUiState) {
                     onClick = { selectedAdvisorByTab = idx },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isSelected) Color(0xFF0A84FF).copy(0.2f) else Color.Transparent,
-                        contentColor = if (isSelected) Color(0xFF0A84FF) else textCol.copy(alpha = 0.6f)
+                        contentColor = if (isSelected) Color(0xFF0A84FF) else Color.White.copy(alpha = 0.6f)
                     ),
                     modifier = Modifier
                         .weight(1f)
@@ -8446,7 +10288,7 @@ fun AccountRecoveryDashboardCardLayout(vModel: ReclaimViewModel, state: ReclaimU
             }
         }
 
-        HorizontalDivider(color = Color.White.copy(0.08f))
+        HorizontalDivider(color = textCol.copy(0.08f))
 
         // Live Status list
         items.forEach { ticket ->
@@ -8636,9 +10478,9 @@ fun AccountRecoveryDashboardCardLayout(vModel: ReclaimViewModel, state: ReclaimU
                                 .height(34.dp),
                             shape = RoundedCornerShape(8.dp),
                             colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = textCol
+                                contentColor = Color.White
                             ),
-                            border = BorderStroke(0.5.dp, textCol.copy(alpha = 0.2f)),
+                            border = BorderStroke(0.5.dp, Color.White.copy(alpha = 0.2f)),
                             contentPadding = PaddingValues(0.dp)
                         ) {
                             Row(
@@ -8791,13 +10633,13 @@ fun AboutSocialMediaContainerCard(state: ReclaimUiState) {
             lineHeight = 14.sp
         )
 
-        HorizontalDivider(color = Color.White.copy(0.08f))
+        HorizontalDivider(color = textCol.copy(0.08f))
 
         val channels = listOf(
             Triple("GitHub OpenRepo", "https://github.com/oshaqplayz/pubg-reclaim", Color(0xFF7C3AED)),
             Triple("WhatsApp Support", "https://chat.whatsapp.com/FFUy9FCSnqiHOVwnrz5kF5?s=cl&p=a&mlu=1", Color(0xFF25D366)),
             Triple("Telegram Channel", "https://t.me/pubgunban2025", Color(0xFF0088CC)),
-            Triple("YouTube Tutorials", "https://www.youtube.com/@oshaqplayz", Color(0xFFFF0000)),
+            Triple("YouTube Tutorials", "https://youtube.com/@oshaqplayzislive", Color(0xFFFF0000)),
             Triple("TikTok Official", "https://www.tiktok.com/@oshaq.playz.yt?_r=1&_t=ZS-978w8J3IUDq", Color(0xFFFE2C55))
         )
 
@@ -8938,7 +10780,7 @@ fun CustomInternetConnectionDialog(onDismiss: () -> Unit) {
                     text = if (isProbing) "AIR PROBING NETWORK DETECT" else "STABLE INTERNET REQUIRED",
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Black,
-                    color = Color.White,
+                    color = textCol,
                     letterSpacing = 1.sp,
                     textAlign = TextAlign.Center
                 )
@@ -8979,14 +10821,14 @@ fun CustomInternetConnectionDialog(onDismiss: () -> Unit) {
                             text = "${(probeProgress.coerceIn(0f, 1f) * 100).toInt()}% COMPLETED",
                             fontSize = 8.sp,
                             fontWeight = FontWeight.ExtraBold,
-                            color = Color.White.copy(0.6f)
+                            color = textCol.copy(0.6f)
                         )
                     }
                 } else {
                     Text(
                         text = "Active Cloud Bypass REST engines require an authenticated network handshake. Connect your device's internet link to fully download live decryption payloads and fetch real-time unban statuses securely.",
                         fontSize = 11.sp,
-                        color = Color.White.copy(0.75f),
+                        color = textCol.copy(0.75f),
                         textAlign = TextAlign.Center,
                         lineHeight = 16.sp
                     )
@@ -9115,7 +10957,7 @@ fun AiCheckBoardCard(
                     },
                     colors = ButtonDefaults.buttonColors(
                         containerColor = if (isSel) Color(0xFF34C759).copy(0.18f) else Color.White.copy(0.04f),
-                        contentColor = if (isSel) Color(0xFF34C759) else textCol.copy(0.7f)
+                        contentColor = if (isSel) Color(0xFF34C759) else Color.White.copy(0.7f)
                     ),
                     border = BorderStroke(0.5.dp, if (isSel) Color(0xFF34C759) else Color.White.copy(0.1f)),
                     shape = RoundedCornerShape(8.dp),
@@ -9395,50 +11237,57 @@ fun DeveloperProfileCard(state: ReclaimUiState) {
             color = textCol.copy(0.45f)
         )
 
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            val developerSocialUrls = listOf(
-                Triple("TikTok", "https://www.tiktok.com/@oshaq.playz.yt?_r=1&_t=ZS-978w8J3IUDq", Color(0xFFFE2C55)),
-                Triple("YouTube", "https://www.youtube.com/@oshaqplayz", Color(0xFFFF0000)),
-                Triple("WhatsApp", "https://chat.whatsapp.com/FFUy9FCSnqiHOVwnrz5kF5?s=cl&p=a&mlu=1", Color(0xFF25D366)),
-                Triple("Telegram", "https://t.me/pubgunban2025", Color(0xFF0088CC))
-            )
+        val developerSocialUrls = listOf(
+            Triple("TikTok", "https://www.tiktok.com/@oshaq.playz.yt?_r=1&_t=ZS-978w8J3IUDq", Color(0xFFFE2C55)),
+            Triple("YouTube", "https://youtube.com/@oshaqplayzislive", Color(0xFFFF0000)),
+            Triple("WhatsApp", "https://chat.whatsapp.com/FFUy9FCSnqiHOVwnrz5kF5?s=cl&p=a&mlu=1", Color(0xFF25D366)),
+            Triple("Telegram", "https://t.me/pubgunban2025", Color(0xFF0088CC))
+        )
 
-            developerSocialUrls.forEach { (platform, url, color) ->
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(38.dp)
-                        .background(Color.White.copy(0.04f), RoundedCornerShape(8.dp))
-                        .border(0.5.dp, Color.White.copy(0.12f), RoundedCornerShape(8.dp))
-                        .bounceClick {
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
-                            try {
-                                context.startActivity(intent)
-                            } catch (e: Exception) {
-                                android.widget.Toast.makeText(context, "Opening link: $url", android.widget.Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                        .padding(horizontal = 4.dp),
-                    contentAlignment = Alignment.Center
+        Column(
+            modifier = Modifier.fillMaxWidth(),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            developerSocialUrls.chunked(2).forEach { rowItems ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
+                    rowItems.forEach { (platform, url, color) ->
                         Box(
                             modifier = Modifier
-                                .size(8.dp)
-                                .background(color, CircleShape)
-                        )
-                        Text(
-                            text = platform.uppercase(),
-                            fontSize = 8.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            color = textCol
-                        )
+                                .weight(1f)
+                                .height(44.dp)
+                                .background(Color.White.copy(0.04f), RoundedCornerShape(10.dp))
+                                .border(0.5.dp, Color.White.copy(0.12f), RoundedCornerShape(10.dp))
+                                .bounceClick {
+                                    val intent = android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(url))
+                                    try {
+                                        context.startActivity(intent)
+                                    } catch (e: Exception) {
+                                        android.widget.Toast.makeText(context, "Opening link: $url", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                                .padding(horizontal = 4.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(10.dp)
+                                        .background(color, CircleShape)
+                                )
+                                Text(
+                                    text = platform.uppercase(),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = textCol
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -9460,23 +11309,7 @@ fun DeveloperProfileCard(state: ReclaimUiState) {
                 isSearching = false
             }
 
-            androidx.compose.ui.window.Dialog(onDismissRequest = { showUpdatesDialog = false }) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .liquidGlass(intensity = state.glassIntensity, cornerRadius = 24.dp)
-                        .border(
-                            1.dp,
-                            if (state.isDarkTheme) Color.White.copy(0.12f) else Color.Black.copy(0.1f),
-                            RoundedCornerShape(24.dp)
-                        )
-                        .padding(20.dp)
-                ) {
-                    Column(
-                        verticalArrangement = Arrangement.spacedBy(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
+            ReclaimDialog(onDismiss = { showUpdatesDialog = false }) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -9567,9 +11400,9 @@ fun DeveloperProfileCard(state: ReclaimUiState) {
                                         onClick = { showUpdatesDialog = false },
                                         colors = ButtonDefaults.buttonColors(
                                             containerColor = Color.White.copy(0.04f),
-                                            contentColor = textCol
+                                            contentColor = Color.White
                                         ),
-                                        border = BorderStroke(0.5.dp, textCol.copy(0.12f)),
+                                        border = BorderStroke(0.5.dp, Color.White.copy(0.12f)),
                                         shape = RoundedCornerShape(10.dp),
                                         modifier = Modifier.weight(1f).height(38.dp)
                                     ) {
@@ -9611,8 +11444,6 @@ fun DeveloperProfileCard(state: ReclaimUiState) {
                             }
                         }
                     }
-                }
-            }
         }
 
         Row(
@@ -9756,7 +11587,7 @@ fun AiChatbotDialog(vModel: ReclaimViewModel, state: ReclaimUiState, onDismiss: 
                                         )
                                         .border(
                                             0.5.dp,
-                                            if (msg.isUser) Color(0xFF0A84FF).copy(0.4f) else textCol.copy(0.08f),
+                                            if (msg.isUser) Color(0xFF0A84FF).copy(0.4f) else Color.White.copy(0.08f),
                                             RoundedCornerShape(
                                                 topStart = 12.dp,
                                                 topEnd = 12.dp,
@@ -9851,7 +11682,7 @@ fun AiChatbotDialog(vModel: ReclaimViewModel, state: ReclaimUiState, onDismiss: 
                             )
                             .border(
                                 1.dp,
-                                textCol.copy(0.12f),
+                                Color.White.copy(0.12f),
                                 RoundedCornerShape(10.dp)
                             )
                             .padding(horizontal = 12.dp),
@@ -9968,7 +11799,7 @@ fun SupportCaseChatDialog(vModel: ReclaimViewModel, state: ReclaimUiState, onDis
                     modifier = Modifier.padding(bottom = 4.dp)
                 )
 
-                HorizontalDivider(color = Color.White.copy(0.08f))
+                HorizontalDivider(color = textCol.copy(0.08f))
 
                 // Case status controls for ADMINS
                 if (state.isAdminMode) {
@@ -9994,7 +11825,7 @@ fun SupportCaseChatDialog(vModel: ReclaimViewModel, state: ReclaimUiState, onDis
                             }
                         }
                     }
-                    HorizontalDivider(color = Color.White.copy(0.08f))
+                    HorizontalDivider(color = textCol.copy(0.08f))
                 }
 
                 // Chat Area
@@ -10201,14 +12032,14 @@ fun OfflineOverlayDialog(
                     .height(44.dp)
             ) {
                 if (checkingConnection) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = textCol, strokeWidth = 2.dp)
                 } else {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
-                        Text("PROBE CONNECTION STATUS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                        Icon(imageVector = Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(16.dp), tint = textCol)
+                        Text("PROBE CONNECTION STATUS", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
                     }
                 }
             }
@@ -10332,7 +12163,69 @@ fun DashboardProgressItem(label: String, progress: Float, glassIntensity: GlassI
 @Composable
 fun CreditSystemPanel(vModel: ReclaimViewModel, state: ReclaimUiState) {
     val textCol = Color.White
-        Column(
+    var isWatchingAd by remember { mutableStateOf(false) }
+    var adCountdown by remember { mutableStateOf(5) }
+
+    LaunchedEffect(isWatchingAd) {
+        if (isWatchingAd) {
+            while (adCountdown > 0) {
+                delay(1000L)
+                adCountdown--
+            }
+            isWatchingAd = false
+            vModel.grantDemoCredits(50)
+            vModel.showToast("Ad Sourced Successfully! +50 Credits Secured.", "SUCCESS")
+        }
+    }
+
+    if (isWatchingAd) {
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { /* Prevent dismiss */ },
+            properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
+        ) {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(16.dp)
+                    .border(1.5.dp, Color(0xFFFFC107), RoundedCornerShape(24.dp)),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0F172A))
+            ) {
+                Column(
+                    modifier = Modifier.padding(28.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator(
+                        progress = (5 - adCountdown) / 5f,
+                        color = Color(0xFFFFC107),
+                        modifier = Modifier.size(56.dp)
+                    )
+                    Text(
+                        text = "STREAMING RECLAIM ADS PORTAL...",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFC107),
+                        letterSpacing = 1.sp
+                    )
+                    Text(
+                        text = "Securing premium credits sponsor link. Do not close.",
+                        fontSize = 10.sp,
+                        color = textCol.copy(alpha = 0.7f),
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "SECURE SPONSOR FEED: $adCountdown SEC REMAINING",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        color = textCol
+                    )
+                }
+            }
+        }
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .liquidGlass(intensity = state.glassIntensity, cornerRadius = 18.dp)
@@ -10346,10 +12239,16 @@ fun CreditSystemPanel(vModel: ReclaimViewModel, state: ReclaimUiState) {
         ) {
             Text(
                 text = "CREDIT SYSTEM & REWARDS",
-                fontSize = 12.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = textCol,
-                letterSpacing = 1.sp
+                style = TextStyle(
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = textCol,
+                    letterSpacing = 1.sp,
+                    shadow = androidx.compose.ui.graphics.Shadow(
+                        color = Color(0xFFFFC107).copy(alpha = 0.5f),
+                        blurRadius = 8f
+                    )
+                )
             )
             Box(
                 modifier = Modifier
@@ -10359,9 +12258,15 @@ fun CreditSystemPanel(vModel: ReclaimViewModel, state: ReclaimUiState) {
             ) {
                 Text(
                     text = "${state.userCredits} CREDITS",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Black,
-                    color = Color(0xFFFFC107)
+                    style = TextStyle(
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color(0xFFFFC107),
+                        shadow = androidx.compose.ui.graphics.Shadow(
+                            color = Color(0xFFFFC107).copy(alpha = 0.8f),
+                            blurRadius = 16f
+                        )
+                    )
                 )
             }
         }
@@ -10399,33 +12304,38 @@ fun CreditSystemPanel(vModel: ReclaimViewModel, state: ReclaimUiState) {
 
         Spacer(modifier = Modifier.height(4.dp))
 
-        val activity = androidx.compose.ui.platform.LocalContext.current as? android.app.Activity
+        val activity = androidx.activity.compose.LocalActivity.current
         Button(
             onClick = {
                 if (activity != null) {
-                    com.example.ui.AdmobManager.showRewardedAd(activity) { amount ->
-                        vModel.grantDemoCredits(50)
-                        android.widget.Toast.makeText(activity, "Credit Reward Claimed!", android.widget.Toast.LENGTH_SHORT).show()
+                    adCountdown = 5
+                    isWatchingAd = true
+                    try {
+                        com.example.ui.AdmobManager.showRewardedAd(activity) { amount ->
+                            // Done via countdown smoothly
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
                     }
                 }
             },
             colors = ButtonDefaults.buttonColors(
-                containerColor = if (state.isDarkTheme) Color.White.copy(0.12f) else Color(0xFF0F172A).copy(0.08f),
-                contentColor = textCol
+                containerColor = Color(0xFFFFC107),
+                contentColor = Color.Black
             ),
-            modifier = Modifier.fillMaxWidth().height(48.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp).bevelGlow(glowColor = Color(0xFFFFC107), cornerRadius = 12.dp),
             shape = RoundedCornerShape(12.dp)
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = if (state.isDarkTheme) Color.White else Color.Black)
+                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
                 Text(
                     text = "WATCH AD FOR +50 CREDITS",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Black,
-                    color = textCol
+                    color = Color.Black
                 )
             }
         }
@@ -10444,14 +12354,14 @@ fun Modifier.shimmerEffect(isDarkTheme: Boolean = true): Modifier = composed {
         initialValue = -2000f,
         targetValue = 2000f,
         animationSpec = infiniteRepeatable(
-            animation = tween(1500, easing = LinearEasing),
+            animation = tween(2500, easing = LinearEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "shimmer_start_offset"
     )
 
-    val shimmerColor = if (isDarkTheme) Color.White.copy(alpha = 0.05f) else Color.Black.copy(alpha = 0.05f)
-    val highlightColor = if (isDarkTheme) Color.White.copy(alpha = 0.15f) else Color.Black.copy(alpha = 0.15f)
+    val shimmerColor = if (isDarkTheme) Color.White.copy(alpha = 0.02f) else Color.Black.copy(alpha = 0.02f)
+    val highlightColor = if (isDarkTheme) Color.White.copy(alpha = 0.08f) else Color.Black.copy(alpha = 0.08f)
 
     background(
         brush = Brush.linearGradient(
@@ -10523,7 +12433,7 @@ fun BanSearchSystemCard(vModel: com.example.ui.ReclaimViewModel, state: com.exam
                 focusedTextColor = textCol,
                 unfocusedTextColor = textCol,
                 focusedBorderColor = Color(0xFF34C759),
-                unfocusedBorderColor = textCol.copy(0.3f),
+                unfocusedBorderColor = Color.White.copy(0.3f),
                 cursorColor = Color(0xFF34C759)
             ),
             keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Number),
@@ -10536,7 +12446,7 @@ fun BanSearchSystemCard(vModel: com.example.ui.ReclaimViewModel, state: com.exam
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34C759))
         ) {
-            Text("SEARCH DATABASE", fontWeight = FontWeight.Bold, color = Color.White)
+            Text("SEARCH DATABASE", fontWeight = FontWeight.Bold, color = textCol)
         }
         
         if (state.searchedBanStatus != null) {
@@ -10553,7 +12463,7 @@ fun BanSearchSystemCard(vModel: com.example.ui.ReclaimViewModel, state: com.exam
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text("Appeal:", color = textCol.copy(0.8f), fontSize = 12.sp)
-                    Text(if (state.searchedAppealAvailable) "AVAILABLE via Core AI" else "UNAVAILABLE", color = if (state.searchedAppealAvailable) Color(0xFF0A84FF) else textCol.copy(0.5f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(if (state.searchedAppealAvailable) "AVAILABLE via Core AI" else "UNAVAILABLE", color = if (state.searchedAppealAvailable) Color(0xFF0A84FF) else Color.White.copy(0.5f), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -10585,7 +12495,7 @@ fun CommunityReportsCard(vModel: com.example.ui.ReclaimViewModel, state: com.exa
             onValueChange = { repUid = it },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Malicious UID", color = textCol.copy(0.7f)) },
-            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = textCol, unfocusedTextColor = textCol, focusedBorderColor = Color(0xFFFF3B30), unfocusedBorderColor = textCol.copy(0.3f)),
+            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = textCol, unfocusedTextColor = textCol, focusedBorderColor = Color(0xFFFF3B30), unfocusedBorderColor = Color.White.copy(0.3f)),
             singleLine = true
         )
         
@@ -10594,7 +12504,7 @@ fun CommunityReportsCard(vModel: com.example.ui.ReclaimViewModel, state: com.exa
             onValueChange = { repReason = it },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Ban Reason (e.g. Aimbot, X-Ray)", color = textCol.copy(0.7f)) },
-            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = textCol, unfocusedTextColor = textCol, focusedBorderColor = Color(0xFFFF3B30), unfocusedBorderColor = textCol.copy(0.3f)),
+            colors = OutlinedTextFieldDefaults.colors(focusedTextColor = textCol, unfocusedTextColor = textCol, focusedBorderColor = Color(0xFFFF3B30), unfocusedBorderColor = Color.White.copy(0.3f)),
             singleLine = true
         )
         
@@ -10610,7 +12520,7 @@ fun CommunityReportsCard(vModel: com.example.ui.ReclaimViewModel, state: com.exa
             shape = RoundedCornerShape(12.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30))
         ) {
-            Text("SUBMIT REPORT", fontWeight = FontWeight.Bold, color = Color.White)
+            Text("SUBMIT REPORT", fontWeight = FontWeight.Bold, color = textCol)
         }
         
         if (state.communityReports.isNotEmpty()) {
@@ -10631,6 +12541,20 @@ fun CommunityReportsCard(vModel: com.example.ui.ReclaimViewModel, state: com.exa
                                 Text(report.status, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = statusCol)
                             }
                             Text("Reason: ${report.banReason}", fontSize = 11.sp, color = textCol.copy(0.8f))
+                            if (state.isAdminMode) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF34C759)).clickable { vModel.updateCommunityReportStatus(report.reportId, "Verified") }.padding(horizontal = 6.dp, vertical = 4.dp)) {
+                                        Text("Verify", fontSize = 9.sp, color = textCol, fontWeight = FontWeight.Bold)
+                                    }
+                                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFFFF3B30)).clickable { vModel.updateCommunityReportStatus(report.reportId, "Rejected") }.padding(horizontal = 6.dp, vertical = 4.dp)) {
+                                        Text("Reject", fontSize = 9.sp, color = textCol, fontWeight = FontWeight.Bold)
+                                    }
+                                    Box(modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(Color.DarkGray).clickable { vModel.deleteCommunityReport(report.reportId) }.padding(horizontal = 6.dp, vertical = 4.dp)) {
+                                        Text("Delete", fontSize = 9.sp, color = textCol, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -10701,11 +12625,11 @@ fun AdminDashboardCard(vModel: ReclaimViewModel, state: ReclaimUiState) {
                     .padding(4.dp),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                listOf("DASH", "USERS", "PROMOS", "NEWS", "REPORTS", "ALERTS", "SLIDERS").forEachIndexed { index, title ->
+                listOf("DASH", "USERS", "PROMOS", "NEWS", "REPORTS", "ALERTS", "SLIDERS", "FEEDBACK", "TIPS", "SYSTEM").forEachIndexed { index, title ->
                     val isSelected = selectedTab == index
                     Box(
                         modifier = Modifier
-                            .width(70.dp)
+                            .width(80.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .background(if (isSelected) Color(0xFF0A84FF) else Color.Transparent)
                             .clickable { selectedTab = index }
@@ -10731,6 +12655,9 @@ fun AdminDashboardCard(vModel: ReclaimViewModel, state: ReclaimUiState) {
                 4 -> AdminReportsManagementTab(vModel, state)
                 5 -> AdminAlertsCenterTab(vModel, state)
                 6 -> AdminSupabaseSliderTab(vModel, state)
+                7 -> AdminFeedbackTab(vModel, state)
+                8 -> AdminRecoveryTipsTab(vModel, state)
+                9 -> AdminSystemTab(vModel, state)
             }
         }
     }
@@ -11017,7 +12944,7 @@ fun AdminUsersTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                                         text = rank.substringBefore(" ").uppercase(),
                                         fontSize = 8.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (scoreSelected) Color.Black else textCol
+                                        color = if (scoreSelected) Color.Black else Color.White
                                     )
                                 }
                             }
@@ -11043,7 +12970,7 @@ fun AdminUsersTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                                         text = role.uppercase(),
                                         fontSize = 8.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = if (roleSelected) Color.Black else textCol
+                                        color = if (roleSelected) Color.Black else Color.White
                                     )
                                 }
                             }
@@ -11084,7 +13011,37 @@ fun AdminUsersTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                                     .clickable { vModel.adminUpdateUserFields(user.uid, null, null, null, null, "Suspended", false, null) }
                                     .padding(horizontal = 8.dp, vertical = 6.dp)
                             ) {
-                                Text("SUSPEND", fontSize = 8.sp, fontWeight = FontWeight.Black, color = Color.White)
+                                Text("SUSPEND", fontSize = 8.sp, fontWeight = FontWeight.Black, color = textCol)
+                            }
+                            // Chat Suspend Action
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFFFF9500))
+                                    .clickable { vModel.adminSuspendUserChat(user.uid, true) }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text("SUSPEND CHAT", fontSize = 8.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                            }
+                            // Device Ban Action
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF550000))
+                                    .clickable { vModel.adminBanUserDevice(user.uid, true) }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text("DEVICE BAN", fontSize = 8.sp, fontWeight = FontWeight.Black, color = textCol)
+                            }
+                            // Delete Action
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color(0xFF8B0000))
+                                    .clickable { vModel.adminDeleteUser(user.uid) }
+                                    .padding(horizontal = 8.dp, vertical = 6.dp)
+                            ) {
+                                Text("DELETE ACCOUNT", fontSize = 8.sp, fontWeight = FontWeight.Black, color = textCol)
                             }
                         }
 
@@ -11419,6 +13376,242 @@ fun AdminAnnouncementsTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
     }
 }
 
+@Composable
+fun AdminFeedbackTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
+    val textCol = if (state.isDarkTheme) Color.White else Color(0xFF0F172A)
+    val subTextCol = if (state.isDarkTheme) Color.White.copy(0.7f) else Color(0xFF475569)
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "FEEDBACK MODERATION PORTAL",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = Color(0xFF0A84FF),
+            letterSpacing = 0.5.sp
+        )
+        Text(
+            text = "Direct real-time moderation of community submit ratings and bug report streams.",
+            fontSize = 9.sp,
+            color = subTextCol
+        )
+
+        Divider(color = if (state.isDarkTheme) Color.White.copy(0.08f) else Color.Black.copy(0.12f), thickness = 0.5.dp)
+
+        val comments = state.userFeedbackList
+        if (comments.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("NO SUBMITTED USER FEEDBACK DETECTED", fontSize = 9.sp, color = subTextCol.copy(0.4f))
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                comments.forEach { item ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(if (state.isDarkTheme) Color.White.copy(0.04f) else Color.Black.copy(0.04f), RoundedCornerShape(8.dp))
+                            .padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .background(
+                                            when (item.type.lowercase()) {
+                                                "bug" -> Color(0xFFFF5252).copy(0.12f)
+                                                "rating" -> Color(0xFFFFCC00).copy(0.12f)
+                                                else -> Color(0xFF0A84FF).copy(0.12f)
+                                            },
+                                            RoundedCornerShape(4.dp)
+                                        )
+                                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                                ) {
+                                    Text(item.type.uppercase(), fontSize = 8.sp, fontWeight = FontWeight.Bold, color = if (item.type.lowercase() == "bug") Color(0xFFFF5252) else Color(0xFF0A84FF))
+                                }
+                                Text(text = item.email, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textCol)
+                            }
+                            Spacer(modifier = Modifier.height(3.dp))
+                            Text(text = item.text, fontSize = 9.5.sp, color = subTextCol)
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Row {
+                                (1..5).forEach { star ->
+                                    Icon(
+                                        imageVector = Icons.Default.Star,
+                                        contentDescription = null,
+                                        tint = if (star <= item.rating) Color(0xFFFFCC00) else Color.White.copy(0.12f),
+                                        modifier = Modifier.size(10.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        IconButton(
+                            onClick = { vModel.deleteFeedback(item.id) },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete Comment Feedback",
+                                tint = Color(0xFFFF5252),
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun AdminRecoveryTipsTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
+    val textCol = if (state.isDarkTheme) Color.White else Color(0xFF0F172A)
+    val subTextCol = if (state.isDarkTheme) Color.White.copy(0.7f) else Color(0xFF475569)
+
+    var tipTitle by remember { mutableStateOf("") }
+    var tipContent by remember { mutableStateOf("") }
+    var tipCategory by remember { mutableStateOf("Security Audit") }
+
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            text = "RECOVERY TIPS MANAGEMENT",
+            fontSize = 11.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = Color(0xFF0A84FF),
+            letterSpacing = 0.5.sp
+        )
+        Text(
+            text = "Publish fresh security audited tips, rules, and procedures to the main feed.",
+            fontSize = 9.sp,
+            color = subTextCol
+        )
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = tipTitle,
+                onValueChange = { tipTitle = it },
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                label = { Text("Tip Title", fontSize = 10.sp, color = subTextCol) },
+                textStyle = TextStyle(color = textCol, fontSize = 12.sp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color(0xFF0A84FF),
+                    unfocusedBorderColor = subTextCol.copy(0.3f)
+                )
+            )
+
+            OutlinedTextField(
+                value = tipContent,
+                onValueChange = { tipContent = it },
+                modifier = Modifier.fillMaxWidth().height(72.dp),
+                label = { Text("Describe the procedures...", fontSize = 10.sp, color = subTextCol) },
+                textStyle = TextStyle(color = textCol, fontSize = 12.sp),
+                maxLines = 3,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Color(0xFF0A84FF),
+                    unfocusedBorderColor = subTextCol.copy(0.3f)
+                )
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Security Audit", "Prerequisites", "Critical Safety", "Management").forEach { cat ->
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(if (tipCategory == cat) Color(0xFF0A84FF) else if (state.isDarkTheme) Color.White.copy(0.06f) else Color.Black.copy(0.06f))
+                            .clickable { tipCategory = cat }
+                            .padding(vertical = 6.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(cat, fontSize = 8.sp, fontWeight = FontWeight.Bold, color = if (tipCategory == cat) Color.White else Color.White)
+                    }
+                }
+            }
+
+            Button(
+                onClick = {
+                    if (tipTitle.isNotBlank() && tipContent.isNotBlank()) {
+                        vModel.addRecoveryTip(tipTitle.trim(), tipContent.trim(), tipCategory)
+                        tipTitle = ""
+                        tipContent = ""
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34C759), contentColor = Color.Black),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.fillMaxWidth().height(36.dp)
+            ) {
+                Text("PUBLISH PROCEDURES TIP", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+            }
+        }
+
+        Divider(color = if (state.isDarkTheme) Color.White.copy(0.08f) else Color.Black.copy(0.12f), thickness = 0.5.dp)
+
+        Text(
+            text = "LIVE ACTIVE SECURITY TIPS (${state.recoveryTips.size})",
+            fontSize = 10.sp,
+            fontWeight = FontWeight.ExtraBold,
+            color = Color(0xFF0A84FF),
+            letterSpacing = 0.5.sp
+        )
+
+        val tips = state.recoveryTips
+        if (tips.isEmpty()) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text("NO DEPLOYED USER ADV-TIPS", fontSize = 9.sp, color = subTextCol.copy(0.4f))
+            }
+        } else {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                tips.forEach { tip ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(if (state.isDarkTheme) Color.White.copy(0.04f) else Color.Black.copy(0.04f), RoundedCornerShape(8.dp))
+                            .padding(10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Box(
+                                modifier = Modifier
+                                    .background(Color(0xFF34C759).copy(0.12f), RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                            ) {
+                                Text(tip.category.uppercase(), fontSize = 7.5.sp, color = Color(0xFF34C759), fontWeight = FontWeight.Bold)
+                            }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(text = tip.title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = textCol)
+                            Text(text = tip.content, fontSize = 9.sp, color = subTextCol.copy(0.7f))
+                        }
+
+                        IconButton(
+                            onClick = { vModel.deleteRecoveryTip(tip.id) },
+                            modifier = Modifier.size(24.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Delete,
+                                contentDescription = "Delete Procedures Tip",
+                                tint = Color(0xFFFF5252),
+                                modifier = Modifier.size(15.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun AdminReportsManagementTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
@@ -11490,7 +13683,7 @@ fun AdminReportsManagementTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                     .fillMaxWidth()
                     .height(34.dp)
             ) {
-                Text("ADD RECORD MANUALLY", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Text("ADD RECORD MANUALLY", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textCol)
             }
         }
 
@@ -11561,14 +13754,14 @@ fun AdminReportsManagementTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                                         modifier = Modifier.weight(1f).height(32.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34C759)),
                                         contentPadding = PaddingValues(0.dp)
-                                    ) { Text("VERIFY", fontSize = 10.sp, color = Color.White) }
+                                    ) { Text("VERIFY", fontSize = 10.sp, color = textCol) }
                                     
                                     Button(
                                         onClick = { vModel.adminVerifyReport(report.reportId, false, false) },
                                         modifier = Modifier.weight(1f).height(32.dp),
                                         colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF3B30)),
                                         contentPadding = PaddingValues(0.dp)
-                                    ) { Text("REJECT", fontSize = 10.sp, color = Color.White) }
+                                    ) { Text("REJECT", fontSize = 10.sp, color = textCol) }
                                 }
                             }
                         }
@@ -11655,7 +13848,7 @@ fun AdminAlertsCenterTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.weight(1f).height(36.dp)
             ) {
-                Text("SEND FCM PUSH", fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.White)
+                Text("SEND FCM PUSH", fontSize = 9.sp, fontWeight = FontWeight.Black, color = textCol)
             }
             
             Button(
@@ -11671,7 +13864,7 @@ fun AdminAlertsCenterTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.weight(1f).height(36.dp)
             ) {
-                Text("TRIGGER POPUP", fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.White)
+                Text("TRIGGER POPUP", fontSize = 9.sp, fontWeight = FontWeight.Black, color = textCol)
             }
         }
     }
@@ -11696,7 +13889,7 @@ fun AdminSupabaseSliderTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                 modifier = Modifier.height(28.dp),
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp)
             ) {
-                Text("ADD", fontSize = 9.sp, fontWeight = FontWeight.Black, color = Color.White)
+                Text("ADD", fontSize = 9.sp, fontWeight = FontWeight.Black, color = textCol)
             }
         }
 
@@ -11777,7 +13970,7 @@ fun AdminSupabaseSliderTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                         textStyle = TextStyle(fontSize = 11.sp, color = textCol),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = Color(0xFF0A84FF),
-                            unfocusedBorderColor = textCol.copy(0.3f),
+                            unfocusedBorderColor = Color.White.copy(0.3f),
                             focusedTextColor = textCol,
                             unfocusedTextColor = textCol
                         )
@@ -11792,7 +13985,7 @@ fun AdminSupabaseSliderTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                         textStyle = TextStyle(fontSize = 11.sp, color = textCol),
                         colors = OutlinedTextFieldDefaults.colors(
                             focusedBorderColor = Color(0xFF0A84FF),
-                            unfocusedBorderColor = textCol.copy(0.3f),
+                            unfocusedBorderColor = Color.White.copy(0.3f),
                             focusedTextColor = textCol,
                             unfocusedTextColor = textCol
                         )
@@ -11805,7 +13998,7 @@ fun AdminSupabaseSliderTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                             modifier = Modifier.weight(1f).height(40.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("CANCEL", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.White)
+                            Text("CANCEL", fontSize = 10.sp, fontWeight = FontWeight.Black, color = textCol)
                         }
                         Button(
                             onClick = {
@@ -11818,11 +14011,391 @@ fun AdminSupabaseSliderTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
                             modifier = Modifier.weight(1f).height(40.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
-                            Text("UPLOAD", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.White)
+                            Text("UPLOAD", fontSize = 10.sp, fontWeight = FontWeight.Black, color = textCol)
                         }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+fun AdminSystemTab(vModel: ReclaimViewModel, state: ReclaimUiState) {
+    val textCol = if (state.isDarkTheme) Color.White else Color(0xFF0F172A)
+    val context = androidx.compose.ui.platform.LocalContext.current
+
+    // Update States
+    var updateUrl by remember { mutableStateOf(state.updateApkUrl) }
+    var updateCode by remember { mutableStateOf(state.updateVerCode.toString()) }
+    var updateName by remember { mutableStateOf(state.updateVerName) }
+    var updateLog by remember { mutableStateOf(state.updateChangelog) }
+    var enforceUpdate by remember { mutableStateOf(state.forceUpdateApp) }
+
+    // Pricing States
+    var costScoreBoost by remember { mutableStateOf(state.costRecoveryScoreBoost.toString()) }
+    var costSandbox by remember { mutableStateOf(state.costPreloadSandbox.toString()) }
+    var costMailDecoupler by remember { mutableStateOf(state.costPreloadMailDecoupler.toString()) }
+    var costNewTicket by remember { mutableStateOf(state.costCreateNewTicket.toString()) }
+    var costEmailAppeal by remember { mutableStateOf(state.costManualEmailAppeal.toString()) }
+
+    // Timer setup
+    var timerSecondsInput by remember { mutableStateOf("60") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // TIMER SECTION
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(if (state.isDarkTheme) Color.White.copy(0.04f) else Color.Black.copy(0.03f), RoundedCornerShape(12.dp))
+                .border(1.dp, if (state.isDarkTheme) Color.White.copy(0.08f) else Color.Black.copy(0.08f), RoundedCornerShape(12.dp))
+                .padding(14.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "ADMIN CORE TIMER",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Black,
+                        color = Color(0xFFFF5E62)
+                    )
+                    
+                    Box(
+                        modifier = Modifier
+                            .background(
+                                if (state.isAdminTimerRunning) Color(0xFF34C759).copy(0.15f) else Color.White.copy(0.06f),
+                                RoundedCornerShape(6.dp)
+                            )
+                            .padding(horizontal = 8.dp, vertical = 3.dp)
+                    ) {
+                        Text(
+                            text = if (state.isAdminTimerRunning) "RUNNING" else "STOPPED",
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Black,
+                            color = if (state.isAdminTimerRunning) Color(0xFF34C759) else Color.White.copy(0.6f)
+                        )
+                    }
+                }
+                
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(70.dp)
+                            .background(Color.Black.copy(0.2f), CircleShape)
+                            .border(1.5.dp, if (state.isAdminTimerRunning) Color(0xFFFF5E62) else Color.Gray.copy(0.4f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                text = "${state.adminTimerSeconds}",
+                                fontSize = 18.sp,
+                                fontWeight = FontWeight.Black,
+                                color = if (state.isAdminTimerRunning) Color(0xFFFF5E62) else Color.White
+                            )
+                            Text(
+                                text = "sec",
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = textCol.copy(0.5f)
+                            )
+                        }
+                    }
+                    
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = timerSecondsInput,
+                            onValueChange = { timerSecondsInput = it.filter { char -> char.isDigit() } },
+                            label = { Text("Duration (secs)", fontSize = 9.sp) },
+                            singleLine = true,
+                            textStyle = TextStyle(fontSize = 11.sp, color = textCol),
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = Color(0xFF0A84FF),
+                                unfocusedBorderColor = Color.White.copy(0.2f),
+                                focusedTextColor = textCol,
+                                unfocusedTextColor = textCol
+                            )
+                        )
+                        
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Button(
+                                onClick = {
+                                    val secs = timerSecondsInput.toIntOrNull() ?: 60
+                                    vModel.adminSetTimer(secs, true)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5E62)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(1.2f).height(32.dp),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text(if (state.isAdminTimerRunning) "RESET" else "START TIMER", fontSize = 9.sp, fontWeight = FontWeight.Black, color = textCol)
+                            }
+                            
+                            Button(
+                                onClick = {
+                                    vModel.adminSetTimer(0, false)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = if (state.isDarkTheme) Color.White.copy(0.12f) else Color.Black.copy(0.08f)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.weight(0.8f).height(32.dp),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("STOP", fontSize = 9.sp, fontWeight = FontWeight.Black, color = textCol)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // PRICING CONTROL
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(if (state.isDarkTheme) Color.White.copy(0.04f) else Color.Black.copy(0.03f), RoundedCornerShape(12.dp))
+                .border(1.dp, if (state.isDarkTheme) Color.White.copy(0.08f) else Color.Black.copy(0.08f), RoundedCornerShape(12.dp))
+                .padding(14.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "ADJUST TOOL CREDITS PRICING",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF34C759)
+                )
+                
+                OutlinedTextField(
+                    value = costScoreBoost,
+                    onValueChange = { costScoreBoost = it.filter { char -> char.isDigit() } },
+                    label = { Text("Recovery Score Booster Cost", fontSize = 9.sp) },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 11.sp, color = textCol),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF34C759),
+                        unfocusedBorderColor = Color.White.copy(0.2f),
+                        focusedTextColor = textCol,
+                        unfocusedTextColor = textCol
+                    )
+                )
+
+                OutlinedTextField(
+                    value = costSandbox,
+                    onValueChange = { costSandbox = it.filter { char -> char.isDigit() } },
+                    label = { Text("Sandbox Isolation Decouple Cost", fontSize = 9.sp) },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 11.sp, color = textCol),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF34C759),
+                        unfocusedBorderColor = Color.White.copy(0.2f),
+                        focusedTextColor = textCol,
+                        unfocusedTextColor = textCol
+                    )
+                )
+
+                OutlinedTextField(
+                    value = costMailDecoupler,
+                    onValueChange = { costMailDecoupler = it.filter { char -> char.isDigit() } },
+                    label = { Text("Mail Decoupler Safe Bypass Cost", fontSize = 9.sp) },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 11.sp, color = textCol),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF34C759),
+                        unfocusedBorderColor = Color.White.copy(0.2f),
+                        focusedTextColor = textCol,
+                        unfocusedTextColor = textCol
+                    )
+                )
+
+                OutlinedTextField(
+                    value = costNewTicket,
+                    onValueChange = { costNewTicket = it.filter { char -> char.isDigit() } },
+                    label = { Text("Open Support Ticket Cost", fontSize = 9.sp) },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 11.sp, color = textCol),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF34C759),
+                        unfocusedBorderColor = Color.White.copy(0.2f),
+                        focusedTextColor = textCol,
+                        unfocusedTextColor = textCol
+                    )
+                )
+
+                OutlinedTextField(
+                    value = costEmailAppeal,
+                    onValueChange = { costEmailAppeal = it.filter { char -> char.isDigit() } },
+                    label = { Text("Manual Appeal dispatch Cost", fontSize = 9.sp) },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 11.sp, color = textCol),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF34C759),
+                        unfocusedBorderColor = Color.White.copy(0.2f),
+                        focusedTextColor = textCol,
+                        unfocusedTextColor = textCol
+                    )
+                )
+                
+                Button(
+                    onClick = {
+                        val scoreBoostVal = costScoreBoost.toIntOrNull() ?: state.costRecoveryScoreBoost
+                        val sandboxVal = costSandbox.toIntOrNull() ?: state.costPreloadSandbox
+                        val mailDecVal = costMailDecoupler.toIntOrNull() ?: state.costPreloadMailDecoupler
+                        val newTicketVal = costNewTicket.toIntOrNull() ?: state.costCreateNewTicket
+                        val emailAppealVal = costEmailAppeal.toIntOrNull() ?: state.costManualEmailAppeal
+                        
+                        vModel.adminConfigurePrices(
+                            boost = scoreBoostVal,
+                            sandbox = sandboxVal,
+                            decoupler = mailDecVal,
+                            ticket = newTicketVal,
+                            appeal = emailAppealVal
+                        )
+                        android.widget.Toast.makeText(context, "Pricing Matrix updated successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF34C759)),
+                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("SAVE PRICING MATRIX", fontSize = 10.sp, fontWeight = FontWeight.Black, color = Color.Black)
+                }
+            }
+        }
+
+        // FORCE APPLICATION UPDATE MANAGER
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(if (state.isDarkTheme) Color.White.copy(0.04f) else Color.Black.copy(0.03f), RoundedCornerShape(12.dp))
+                .border(1.dp, if (state.isDarkTheme) Color.White.copy(0.08f) else Color.Black.copy(0.08f), RoundedCornerShape(12.dp))
+                .padding(14.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "APP VERSION UPDATE MODULE",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Black,
+                    color = Color(0xFF0A84FF)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("FORCEFUL REDIRECT UPDATE", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = textCol)
+                        Text("Users locked out until web update is complete", fontSize = 8.sp, color = textCol.copy(0.5f))
+                    }
+                    Switch(
+                        checked = enforceUpdate,
+                        onCheckedChange = { enforceUpdate = it },
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color(0xFF0A84FF))
+                    )
+                }
+
+                OutlinedTextField(
+                    value = updateUrl,
+                    onValueChange = { updateUrl = it },
+                    label = { Text("App Web / Upload Download Link", fontSize = 9.sp) },
+                    singleLine = true,
+                    textStyle = TextStyle(fontSize = 11.sp, color = textCol),
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF0A84FF),
+                        unfocusedBorderColor = Color.White.copy(0.2f),
+                        focusedTextColor = textCol,
+                        unfocusedTextColor = textCol
+                    )
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    OutlinedTextField(
+                        value = updateName,
+                        onValueChange = { updateName = it },
+                        label = { Text("Version Name", fontSize = 9.sp) },
+                        singleLine = true,
+                        textStyle = TextStyle(fontSize = 11.sp, color = textCol),
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF0A84FF),
+                            unfocusedBorderColor = Color.White.copy(0.2f),
+                            focusedTextColor = textCol,
+                            unfocusedTextColor = textCol
+                        )
+                    )
+
+                    OutlinedTextField(
+                        value = updateCode,
+                        onValueChange = { updateCode = it.filter { char -> char.isDigit() } },
+                        label = { Text("Version Code", fontSize = 9.sp) },
+                        singleLine = true,
+                        textStyle = TextStyle(fontSize = 11.sp, color = textCol),
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF0A84FF),
+                            unfocusedBorderColor = Color.White.copy(0.2f),
+                            focusedTextColor = textCol,
+                            unfocusedTextColor = textCol
+                        )
+                    )
+                }
+
+                OutlinedTextField(
+                    value = updateLog,
+                    onValueChange = { updateLog = it },
+                    label = { Text("Update Changelog & Releases Description", fontSize = 9.sp) },
+                    textStyle = TextStyle(fontSize = 11.sp, color = textCol),
+                    modifier = Modifier.fillMaxWidth().height(84.dp),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF0A84FF),
+                        unfocusedBorderColor = Color.White.copy(0.2f),
+                        focusedTextColor = textCol,
+                        unfocusedTextColor = textCol
+                    )
+                )
+
+                Button(
+                    onClick = {
+                        val verCodeVal = updateCode.toIntOrNull() ?: state.updateVerCode
+                        vModel.adminUpdateAppUpdate(
+                            force = enforceUpdate,
+                            optional = !enforceUpdate,
+                            url = updateUrl,
+                            verName = updateName,
+                            verCode = verCodeVal,
+                            changelog = updateLog
+                        )
+                        android.widget.Toast.makeText(context, "Update published successfully!", android.widget.Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0A84FF)),
+                    modifier = Modifier.fillMaxWidth().height(36.dp),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Text("PUBLISH WEB CRITICAL UPDATE", fontSize = 10.sp, fontWeight = FontWeight.Black, color = textCol)
+                }
+            }
+        }
+        
+        Spacer(modifier = Modifier.height(24.dp))
     }
 }
